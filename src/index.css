@@ -10,34 +10,40 @@ body,
 
 body {
   margin: 0;
-  font-family: 'Roboto', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  /* UI chrome font is Red Hat Text; document font is user-selected. */
+  font-family: 'Red Hat Text', system-ui, -apple-system, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: #f9fbfd;
-  color: #202124;
+  background: #faf7f4;
+  color: #2b2622;
   overflow: hidden;
 }
 
-/* Native scrollbar styling - subtle like Google Docs */
+/* Native scrollbar styling, tinted with the brand orange */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.18);
+  background: rgba(194, 87, 15, 0.28);
   border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.28);
+  background: rgba(194, 87, 15, 0.45);
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 
-/* Document area placeholder cursor */
-.doc-textarea {
+/* Editable document surface */
+.doc-surface {
   outline: none;
-  min-height: 1056px; /* 11" x 96dpi - standard US Letter */
+  min-height: 1056px; /* 11in x 96dpi - US Letter */
+}
+.doc-surface:empty::before {
+  content: attr(data-placeholder);
+  color: #a8a29a;
+  pointer-events: none;
 }
 
 /* Document paper shadow */
@@ -46,11 +52,19 @@ body {
   box-shadow: 0 1px 3px rgba(60, 64, 67, 0.15), 0 4px 8px 3px rgba(60, 64, 67, 0.05);
 }
 
-/* Toolbar dropdown fade-in */
+/* Toolbar / menu dropdown fade-in */
 .dropdown {
   animation: fadeIn 0.12s ease-out;
 }
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(-2px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Hide the print chrome when printing; print only the page */
+@media print {
+  @page { margin: 0.75in; }
+  body { background: #fff; overflow: visible; }
+  .no-print { display: none !important; }
+  .doc-paper { box-shadow: none; }
 }

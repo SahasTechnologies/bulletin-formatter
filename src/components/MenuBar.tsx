@@ -1,154 +1,236 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { LucideIcon } from 'lucide-react';
 import {
   Star,
-  MessageSquareText,
-  Lock,
-  Share2,
+  FilePlus,
+  FolderOpen,
+  Copy,
+  Download,
+  Printer,
+  Pencil,
+  Undo2,
+  Redo2,
+  Scissors,
+  ClipboardCopy,
+  ClipboardPaste,
+  Search,
+  ZoomIn,
+  ZoomOut,
+  Ruler,
+  Maximize,
+  Image as ImageIcon,
+  Minus,
+  Table,
+  Calendar,
+  ScissorsLineDashed,
+  Bold,
+  Italic,
+  Underline,
+  Strikethrough,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  AlignJustify,
+  Eraser,
+  Hash,
+  SpellCheck,
+  Keyboard,
+  Info,
   ChevronDown,
 } from 'lucide-react';
 
-const MENU_ITEMS = ['File', 'Edit', 'View', 'Insert', 'Format', 'Tools', 'Extensions', 'Help'] as const;
+type MenuItem =
+  | { id: string; label: string; icon: LucideIcon; shortcut?: string }
+  | 'sep';
+
+const MENUS: Record<string, MenuItem[]> = {
+  File: [
+    { id: 'file.new', label: 'New', icon: FilePlus, shortcut: 'Ctrl+N' },
+    { id: 'file.open', label: 'Open…', icon: FolderOpen, shortcut: 'Ctrl+O' },
+    'sep',
+    { id: 'file.copy', label: 'Make a copy', icon: Copy },
+    { id: 'file.download', label: 'Download as HTML', icon: Download },
+    'sep',
+    { id: 'file.pagesetup', label: 'Page setup: A4 / Letter', icon: Pencil },
+    { id: 'file.print', label: 'Print', icon: Printer, shortcut: 'Ctrl+P' },
+    'sep',
+    { id: 'file.rename', label: 'Rename', icon: Pencil },
+  ],
+  Edit: [
+    { id: 'edit.undo', label: 'Undo', icon: Undo2, shortcut: 'Ctrl+Z' },
+    { id: 'edit.redo', label: 'Redo', icon: Redo2, shortcut: 'Ctrl+Y' },
+    'sep',
+    { id: 'edit.cut', label: 'Cut', icon: Scissors, shortcut: 'Ctrl+X' },
+    { id: 'edit.copy', label: 'Copy', icon: ClipboardCopy, shortcut: 'Ctrl+C' },
+    { id: 'edit.paste', label: 'Paste', icon: ClipboardPaste, shortcut: 'Ctrl+V' },
+    'sep',
+    { id: 'edit.find', label: 'Find and replace', icon: Search, shortcut: 'Ctrl+F' },
+    { id: 'edit.selectall', label: 'Select all', icon: ClipboardCopy, shortcut: 'Ctrl+A' },
+  ],
+  View: [
+    { id: 'view.zoomin', label: 'Zoom in', icon: ZoomIn },
+    { id: 'view.zoomout', label: 'Zoom out', icon: ZoomOut },
+    { id: 'view.zoomreset', label: 'Reset zoom to 100%', icon: Search },
+    'sep',
+    { id: 'view.ruler', label: 'Show ruler', icon: Ruler },
+    { id: 'view.fullscreen', label: 'Full screen', icon: Maximize },
+  ],
+  Insert: [
+    { id: 'insert.image', label: 'Image…', icon: ImageIcon },
+    { id: 'insert.table', label: 'Table', icon: Table },
+    { id: 'insert.rule', label: 'Horizontal line', icon: Minus },
+    { id: 'insert.pagebreak', label: 'Page break', icon: ScissorsLineDashed },
+    'sep',
+    { id: 'insert.date', label: 'Today’s date', icon: Calendar },
+  ],
+  Format: [
+    { id: 'format.bold', label: 'Bold', icon: Bold, shortcut: 'Ctrl+B' },
+    { id: 'format.italic', label: 'Italic', icon: Italic, shortcut: 'Ctrl+I' },
+    { id: 'format.underline', label: 'Underline', icon: Underline, shortcut: 'Ctrl+U' },
+    { id: 'format.strike', label: 'Strikethrough', icon: Strikethrough },
+    'sep',
+    { id: 'format.left', label: 'Align left', icon: AlignLeft, shortcut: 'Ctrl+Shift+L' },
+    { id: 'format.center', label: 'Align centre', icon: AlignCenter, shortcut: 'Ctrl+Shift+E' },
+    { id: 'format.right', label: 'Align right', icon: AlignRight, shortcut: 'Ctrl+Shift+R' },
+    { id: 'format.justify', label: 'Justify', icon: AlignJustify, shortcut: 'Ctrl+Shift+J' },
+    'sep',
+    { id: 'format.clear', label: 'Clear formatting', icon: Eraser, shortcut: 'Ctrl+\\' },
+  ],
+  Tools: [
+    { id: 'tools.wordcount', label: 'Word count', icon: Hash, shortcut: 'Ctrl+Shift+C' },
+    { id: 'tools.spellcheck', label: 'Toggle spellcheck', icon: SpellCheck },
+  ],
+  Help: [
+    { id: 'help.shortcuts', label: 'Keyboard shortcuts', icon: Keyboard, shortcut: 'Ctrl+/' },
+    { id: 'help.about', label: 'About Bulletin Formatter', icon: Info },
+  ],
+};
+
+const MENU_NAMES = Object.keys(MENUS);
 
 interface MenuBarProps {
   title: string;
   starred: boolean;
   onTitleChange: (t: string) => void;
   onToggleStar: () => void;
+  onRun: (id: string) => void;
+  wordCount: number;
+  titleRef: React.RefObject<HTMLInputElement>;
 }
 
-export default function MenuBar({ title, starred, onTitleChange, onToggleStar }: MenuBarProps) {
+export default function MenuBar({
+  title,
+  starred,
+  onTitleChange,
+  onToggleStar,
+  onRun,
+  wordCount,
+  titleRef,
+}: MenuBarProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const barRef = useRef<HTMLDivElement>(null);
 
-  // Close any open menu when clicking outside.
   useEffect(() => {
-    const onClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest('[data-menu-root]')) setOpenMenu(null);
+    const onDown = (e: MouseEvent) => {
+      if (!barRef.current?.contains(e.target as Node)) setOpenMenu(null);
     };
-    window.addEventListener('mousedown', onClick);
-    return () => window.removeEventListener('mousedown', onClick);
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpenMenu(null);
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onEsc);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onEsc);
+    };
   }, []);
 
   return (
-    <div className="flex h-12 flex-shrink-0 items-center justify-between border-b border-gdoc-border bg-white px-3">
-      <div className="flex items-center gap-2">
-        {/* Document icon (Docs-style) */}
-        <div
-          className="grid h-8 w-8 place-items-center rounded text-white"
-          style={{ background: 'linear-gradient(135deg, #4285f4 0%, #1a73e8 100%)' }}
-          aria-hidden
-        >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm0 7V3.5L19.5 9H14z" />
-          </svg>
-        </div>
+    <div
+      ref={barRef}
+      className="no-print relative z-30 flex h-12 flex-shrink-0 items-center justify-between border-b border-gdoc-border bg-white px-3 font-ui"
+    >
+      <div className="flex items-center gap-3">
+        <img
+          src="/logo.webp"
+          alt="Baulko Bulletin"
+          className="h-9 w-9 flex-none rounded object-contain"
+        />
 
-        <div className="flex flex-col leading-tight">
+        <div className="flex items-center gap-2">
           <div className="flex items-center gap-1">
             <input
-              className="w-[230px] bg-transparent text-[15px] font-medium text-[#202124] outline-none placeholder:text-gdoc-muted"
+              ref={titleRef}
+              className="w-[210px] rounded bg-transparent px-1 text-[15px] font-medium text-[#2b2622] outline-none hover:bg-gdoc-hover focus:bg-gdoc-hover"
               value={title}
               onChange={(e) => onTitleChange(e.target.value)}
               spellCheck={false}
+              aria-label="Document title"
             />
             <button
               onClick={onToggleStar}
               className="rounded-full p-1 text-gdoc-muted hover:bg-gdoc-hover"
               title={starred ? 'Remove star' : 'Add star'}
             >
-              <Star size={16} fill={starred ? '#fbbc04' : 'none'} stroke={starred ? '#fbbc04' : 'currentColor'} />
+              <Star size={16} fill={starred ? '#fe9c53' : 'none'} stroke={starred ? '#fe9c53' : 'currentColor'} />
             </button>
           </div>
-          <div
-            data-menu-root
-            className="flex items-center gap-1 text-[12.5px] text-gdoc-muted"
-          >
-            {MENU_ITEMS.map((m) => (
-              <button
-                key={m}
-                onClick={() => setOpenMenu(openMenu === m ? null : m)}
-                className={`rounded px-2 py-[2px] hover:bg-gdoc-hover ${
-                  openMenu === m ? 'bg-gdoc-hover' : ''
-                }`}
-              >
-                {m}
-              </button>
+
+          {/* Each panel is positioned relative to its own trigger, so it always
+              opens directly below the button that was clicked. */}
+          <div className="flex items-center">
+            {MENU_NAMES.map((name) => (
+              <div key={name} className="relative">
+                <button
+                  onClick={() => setOpenMenu(openMenu === name ? null : name)}
+                  onMouseEnter={() => {
+                    // Once a menu is open, hovering another title switches to it.
+                    if (openMenu && openMenu !== name) setOpenMenu(name);
+                  }}
+                  className={`flex items-center gap-0.5 rounded px-2 py-1 text-[13px] transition-colors hover:bg-gdoc-hover ${
+                    openMenu === name ? 'bg-gdoc-active text-bb-700' : 'text-gdoc-muted'
+                  }`}
+                >
+                  {name}
+                  <ChevronDown size={12} className="opacity-60" />
+                </button>
+
+                {openMenu === name && (
+                  <div className="dropdown absolute left-0 top-full z-40 mt-1 w-[270px] rounded-md border border-gdoc-border bg-white py-1 shadow-xl">
+                    {MENUS[name].map((item, i) =>
+                      item === 'sep' ? (
+                        <div key={`sep-${i}`} className="my-1 border-t border-gdoc-border" />
+                      ) : (
+                        <button
+                          key={item.id}
+                          onClick={() => {
+                            onRun(item.id);
+                            setOpenMenu(null);
+                          }}
+                          className="flex w-full items-center gap-3 px-3 py-1.5 text-left text-[13px] text-[#2b2622] hover:bg-gdoc-hover"
+                        >
+                          <item.icon size={15} className="flex-none text-bb-600" />
+                          <span className="flex-1 truncate">{item.label}</span>
+                          {item.shortcut && (
+                            <span className="flex-none text-[11px] text-gdoc-muted">{item.shortcut}</span>
+                          )}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                )}
+              </div>
             ))}
-            {openMenu && <MenuFlyout name={openMenu} onClose={() => setOpenMenu(null)} />}
           </div>
         </div>
       </div>
 
-      <div className="flex items-center gap-1">
-        <button
-          className="grid h-8 w-8 place-items-center rounded-full text-gdoc-muted hover:bg-gdoc-hover"
-          title="Comments"
-        >
-          <MessageSquareText size={18} />
-        </button>
-        <button
-          className="grid h-8 w-8 place-items-center rounded-full bg-gdoc-active text-[#1a73e8] hover:bg-[#d2e3fc]"
-          title="Open comment history"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z" />
-          </svg>
-        </button>
-        <button
-          className="ml-2 flex h-9 items-center gap-2 rounded-full bg-[#1a73e8] px-3 text-sm font-medium text-white hover:bg-[#1765cc]"
-          title="Share"
-        >
-          <Lock size={14} />
-          <span>Share</span>
-        </button>
-        <button
-          className="grid h-8 w-8 place-items-center rounded-full text-gdoc-muted hover:bg-gdoc-hover"
-          title="More"
-        >
-          <ChevronDown size={18} />
-        </button>
-        <div
-          className="ml-1 grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-purple-500 to-blue-500 text-xs font-medium text-white"
-          title="Account"
-        >
-          <Share2 size={14} className="hidden" />
-          S
-        </div>
+      {/* Read-only status — not a button, so it can never be a dead control. */}
+      <div className="flex items-center gap-3 text-[12px] text-gdoc-muted">
+        <span>
+          {wordCount.toLocaleString()} {wordCount === 1 ? 'word' : 'words'}
+        </span>
       </div>
-    </div>
-  );
-}
-
-function MenuFlyout({ name, onClose }: { name: string; onClose: () => void }) {
-  // Simple stub flyout to demonstrate the menu wiring.
-  const items: Record<string, string[]> = {
-    File: ['New', 'Open', 'Open recent', '—', 'Make a copy', 'Download', '—', 'Version history', '—', 'Page setup', 'Print', '—', 'Rename', 'Move', '—', 'Move to trash'],
-    Edit: ['Undo', 'Redo', '—', 'Cut', 'Copy', 'Paste', '—', 'Find and replace', '—', 'Select all'],
-    View: ['Print layout', 'Mode', 'Show rulers', 'Show outline', '—', 'Zoom', '—', 'Full screen'],
-    Insert: ['Image', 'Text box', 'Table', 'Horizontal line', '—', 'Special characters', '—', 'Header & footer', 'Page numbers', '—', 'Chart', 'Diagram', '—', 'Date', 'Footnote'],
-    Format: ['Text', 'Paragraph styles', '—', 'Bold', 'Italic', 'Underline', 'Strikethrough', '—', 'Align', 'Line spacing', '—', 'Bullets & numbering', '—', 'Columns', '—', 'Clear formatting'],
-    Tools: ['Spelling and grammar', 'Word count', '—', 'Voice typing', '—', 'Translate document', '—', 'Accessibility settings'],
-    Extensions: ['Add-ons', 'Apps Script'],
-    Help: ['Docs Help', 'Keyboard shortcuts', 'What\u2019s new', '—', 'Send feedback', '—', 'Terms of Service', 'Privacy Policy'],
-  };
-  return (
-    <div
-      className="dropdown fixed left-3 top-[60px] z-50 w-56 rounded-md border border-gdoc-border bg-white py-1 text-[13px] text-[#202124] shadow-lg"
-      onClick={(e) => e.stopPropagation()}
-    >
-      {(items[name] ?? []).map((it, i) =>
-        it === '—' ? (
-          <div key={i} className="my-1 border-t border-gdoc-border" />
-        ) : (
-          <button
-            key={i}
-            className="block w-full px-4 py-1.5 text-left hover:bg-gdoc-hover"
-            onClick={onClose}
-          >
-            {it}
-          </button>
-        ),
-      )}
     </div>
   );
 }

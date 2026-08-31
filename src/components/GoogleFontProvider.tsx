@@ -25,10 +25,16 @@ export function GoogleFontProvider({ children }: { children: React.ReactNode }) 
         if (cache.has(key)) return cache.get(key)!;
         const link = document.createElement('link');
         link.rel = 'stylesheet';
-        // Request all weights Google typically serves for the family.
-        link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:wght@300;400;500;600;700&display=swap`;
+        // No weight axis: requesting specific weights is unnecessary (the
+        // browser synthesises bold/italic when a family lacks them) and keeps
+        // the URL valid for every one of the 1,946 families.
+        link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}&display=swap`;
         link.dataset.font = family;
         document.head.appendChild(link);
+        // Force the download immediately so text never lingers on a fallback.
+        document.fonts?.load(`400 16px "${family}"`).catch(() => {
+          /* non-fatal: the <link> alone is enough */
+        });
         cache.set(key, link);
         return link;
       },
