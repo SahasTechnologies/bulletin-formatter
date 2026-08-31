@@ -106,8 +106,14 @@ type MenuKey =
   | 'more'
   | 'link';
 
-/** Prevents the editor from losing focus, which would drop the text selection. */
+/**
+ * Snapshot the current editor range before a toolbar control handles the
+ * pointer, then stop the control from taking focus. Capturing here (rather
+ * than relying only on `selectionchange`) is important because React may
+ * mount a dropdown input in the same frame.
+ */
 function keepSelection(e: React.MouseEvent) {
+  ed.captureSelection();
   e.preventDefault();
 }
 
@@ -124,13 +130,51 @@ export default function Toolbar(props: ToolbarProps) {
   const [fontLimit, setFontLimit] = useState(FONT_PAGE);
   const [linkUrl, setLinkUrl] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  
+  // Track when we're manually applying styles to avoid reading stale values
+  const isApplyingStyleRef = useRef(false);
 
   // Re-render on selection changes so B/I/U and alignment reflect the caret.
   const [, force] = useReducer((x: number) => x + 1, 0);
   useEffect(() => {
-    document.addEventListener('selectionchange', force);
-    return () => document.removeEventListener('selectionchange', force);
-  }, []);
+    const updateCurrentStyle = () => {
+      // Skip if we're in the middle of applying a style
+      if (isApplyingStyleRef.current) return;
+      
+      // Skip if a dropdown is open (user is actively selecting)
+      if (open !== null) return;
+      
+      force();
+      
+      // Update font, size, and style based on current cursor position
+      const fontFamily = ed.currentStyle('font-family');
+      if (fontFamily) {
+        // Extract the first font from the font-family stack
+        // Handle both quoted and unquoted font names
+        const match = fontFamily.match(/^["']?([^"',]+)["']?/);
+        if (match) {
+          const extractedFont = match[1].trim();
+          // Only update if it's a Google Font we know about
+          if (isGoogleFont(extractedFont)) {
+            setFont(extractedFont);
+          }
+        }
+      }
+      
+      const fontSize = ed.currentStyle('font-size');
+      if (fontSize) {
+        // Convert px to pt (1pt = 96/72 px = 1.333... px, so pt = px * 0.75)
+        const pxValue = parseFloat(fontSize);
+        if (!isNaN(pxValue)) {
+          const ptValue = Math.round(pxValue * 0.75);
+          setSize(ptValue);
+        }
+      }
+    };
+    
+    document.addEventListener('selectionchange', updateCurrentStyle);
+    return () => document.removeEventListener('selectionchange', updateCurrentStyle);
+  }, [isGoogleFont, open]);
 
   // Close menus when clicking outside the toolbar.
   useEffect(() => {
@@ -158,20 +202,63 @@ export default function Toolbar(props: ToolbarProps) {
   const visibleFonts = useMemo(() => allMatches.slice(0, fontLimit), [allMatches, fontLimit]);
 
   const applyFont = (family: string) => {
-    if (isGoogleFont(family)) loadFont(family);
-    // Apply via a CSS span with a fallback stack. `execCommand('fontName')`
-    // would emit a bare `font-family: X` with no fallback, so while the
-    // webfont is still downloading Chrome renders the default serif —
-    // the "every font looks like Times" bug.
-    ed.applyInlineStyle('font-family', `"${family}", "Red Hat Text", sans-serif`);
+    isApplyingStyleRef.current = true;
+    
+    const doApply = () => {
+      // Apply via a CSS span with a fallback stack. `execCommand('fontName')`
+      // would emit a bare `font-family: X` with no fallback, so while the
+      // webfont is still downloading Chrome renders the default serif —
+      // the "every font looks like Times" bug.
+      ed.applyInlineStyle('font-family', `"${family}", "Red Hat Text", sans-serif`);
+      
+      // Force editor focus to ensure changes are applied
+      const editor = ed.getEditor();
+      if (editor) editor.focus();
+      
+      setTimeout(() => {
+        isApplyingStyleRef.current = false;
+      }, 50);
+    };
+    
+    // Load the font first if it's a Google Font
+    if (isGoogleFont(family)) {
+      loadFont(family);
+      // Wait for the font to be ready before applying the style
+      if (document.fonts) {
+        document.fonts.load(`400 16px "${family}"`).then(() => {
+          doApply();
+        }).catch(() => {
+          // If font loading fails, apply anyway after a short delay
+          setTimeout(doApply, 100);
+        });
+      } else {
+        // Fallback if Font Loading API isn't available
+        setTimeout(doApply, 100);
+      }
+    } else {
+      // Non-Google font, apply immediately
+      doApply();
+    }
+    
     setFont(family);
     setOpen(null);
   };
 
   const applySize = (pt: number) => {
+    isApplyingStyleRef.current = true;
+    
     ed.applyInlineStyle('font-size', `${pt}pt`);
     setSize(pt);
     setOpen(null);
+    
+    // Force editor focus to ensure changes are applied
+    const editor = ed.getEditor();
+    if (editor) editor.focus();
+    
+    // Allow style reading after a short delay
+    setTimeout(() => {
+      isApplyingStyleRef.current = false;
+    }, 100);
   };
 
   const applyStyle = (s: (typeof PARAGRAPH_STYLES)[number]) => {

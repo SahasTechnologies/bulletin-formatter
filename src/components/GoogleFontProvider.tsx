@@ -31,8 +31,12 @@ export function GoogleFontProvider({ children }: { children: React.ReactNode }) 
         link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}&display=swap`;
         link.dataset.font = family;
         document.head.appendChild(link);
+        console.log(`Loading font: ${family}, URL: ${link.href}`);
         // Force the download immediately so text never lingers on a fallback.
-        document.fonts?.load(`400 16px "${family}"`).catch(() => {
+        document.fonts?.load(`400 16px "${family}"`).then(() => {
+          console.log(`Font loaded successfully: ${family}`);
+        }).catch((err) => {
+          console.error(`Font load failed: ${family}`, err);
           /* non-fatal: the <link> alone is enough */
         });
         cache.set(key, link);

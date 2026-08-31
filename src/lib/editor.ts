@@ -29,6 +29,12 @@ export function initEditorCommands() {
   } catch {
     /* not supported everywhere; harmless */
   }
+  try {
+    // Ensure default execCommand uses CSS
+    document.execCommand('defaultParagraphSeparator', false, 'p');
+  } catch {
+    /* not supported everywhere; harmless */
+  }
 }
 
 function isInsideEditor(node: Node | null): boolean {
@@ -166,18 +172,24 @@ export function applyInlineStyle(prop: string, value: string): void {
   const span = document.createElement('span');
   span.style.setProperty(prop, value);
   try {
-    span.appendChild(range.extractContents());
+    const contents = range.extractContents();
+    span.appendChild(contents);
     range.insertNode(span);
-    const next = document.createRange();
-    next.selectNodeContents(span);
+    
+    // Select the newly inserted span content
+    const newRange = document.createRange();
+    newRange.selectNodeContents(span);
     sel.removeAllRanges();
-    sel.addRange(next);
+    sel.addRange(newRange);
+    
+    // Capture the new selection
+    savedRange = newRange.cloneRange();
   } catch {
     // Fall back to styling the whole block.
     const block = getCurrentBlock();
     if (block) block.style.setProperty(prop, value);
+    captureSelection();
   }
-  captureSelection();
 }
 
 /** Line-height is not a native execCommand, so set it on the touched blocks. */
@@ -217,6 +229,31 @@ export function insertImageFromFile(file: File): void {
 
 /** Computed CSS value at the caret, e.g. `currentStyle('fontFamily')`. */
 export function currentStyle(prop: string): string {
+  if (!savedRange) return '';
+  
+  // First try to get the style from the immediate parent element
+  let node: Node | null = savedRange.startContainer;
+  if (node.nodeType === Node.TEXT_NODE) node = node.parentNode;
+  
+  // Walk up to find an element with the specified style
+  while (node && node !== editorEl) {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node as HTMLElement;
+      
+      // Check inline style first (most specific)
+      const inlineValue = el.style.getPropertyValue(prop);
+      if (inlineValue) return inlineValue;
+      
+      // Check computed style
+      const computedValue = window.getComputedStyle(el).getPropertyValue(prop);
+      if (computedValue && computedValue !== 'inherit' && computedValue !== 'initial') {
+        return computedValue;
+      }
+    }
+    node = node.parentNode;
+  }
+  
+  // Fall back to the current block
   const block = getCurrentBlock();
   if (!block) return '';
   return window.getComputedStyle(block).getPropertyValue(prop);
