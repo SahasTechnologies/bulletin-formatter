@@ -55,6 +55,11 @@ export function hasSavedSelection(): boolean {
   return !!savedRange;
 }
 
+/** True when the saved range covers actual text, not just a blinking caret. */
+export function hasSelection(): boolean {
+  return !!savedRange && !savedRange.collapsed;
+}
+
 /** Put the caret / selection back inside the editor. */
 export function restoreSelection(): boolean {
   if (!savedRange || !editorEl) return false;
@@ -140,6 +145,52 @@ export function getCurrentBlock(): HTMLElement | null {
 }
 
 /**
+ * Remove every declaration of `prop` from an element subtree.
+ * Used before re-styling so the new value replaces the old one cleanly.
+ */
+function stripProperty(root: DocumentFragment | Element, prop: string): void {
+  const elements: Element[] =
+    root.nodeType === Node.DOCUMENT_FRAGMENT_NODE
+      ? Array.from((root as DocumentFragment).children)
+      : [root as Element];
+
+  for (const el of elements) {
+    if (el instanceof HTMLElement) el.style.removeProperty(prop);
+    for (const child of Array.from(el.children)) stripProperty(child, prop);
+  }
+}
+
+/**
+ * True when `range` spans the entire contents of `el`.
+ *
+ * We compare boundary points rather than using `Selection.containsNode`,
+ * because that helper only reports containment when the range boundaries sit
+ * *outside* the node — a range that covers a span's whole text but starts and
+ * ends inside it would otherwise be treated as a partial selection.
+ */
+function rangeCoversContent(range: Range, el: HTMLElement): boolean {
+  const elRange = el.ownerDocument.createRange();
+  elRange.selectNodeContents(el);
+  const startsAtOrBefore = range.compareBoundaryPoints(Range.START_TO_START, elRange) <= 0;
+  const endsAtOrAfter = range.compareBoundaryPoints(Range.END_TO_END, elRange) >= 0;
+  if (startsAtOrBefore && endsAtOrAfter) return true;
+
+  // A range that spans the element's entire text but starts and ends *inside*
+  // it still compares as "not containing" it: (span, 0) is a different tree
+  // position from (text, 0). Fall back to comparing the actual text.
+  const elText = el.textContent ?? '';
+  return elText.length > 0 && range.toString() === elText;
+}
+
+/** Replace an element with its own children, keeping the child nodes alive. */
+function unwrapElement(el: HTMLElement): void {
+  const parent = el.parentNode;
+  if (!parent) return;
+  while (el.firstChild) parent.insertBefore(el.firstChild, el);
+  parent.removeChild(el);
+}
+
+/**
  * Apply a CSS property to the selection.
  *
  * - Collapsed caret  -> sets it on the current block (applies to new typing).
@@ -171,19 +222,60 @@ export function applyInlineStyle(prop: string, value: string): void {
   // Single block (or plain text): wrap in a styled span.
   const span = document.createElement('span');
   span.style.setProperty(prop, value);
+  const root = getEditor();
+
   try {
+    // Ancestor spans that the selection covers *entirely*. We clear the old
+    // value from these after inserting, otherwise every font / colour change
+    // would wrap the text in yet another span and the DOM would grow forever.
+    const covered: HTMLElement[] = [];
+    let anc: HTMLElement | null =
+      range.commonAncestorContainer.nodeType === Node.TEXT_NODE
+        ? range.commonAncestorContainer.parentElement
+        : (range.commonAncestorContainer as HTMLElement);
+    while (anc && anc !== root) {
+      if (anc.tagName === 'SPAN' && rangeCoversContent(range, anc)) covered.push(anc);
+      anc = anc.parentElement;
+    }
+
     const contents = range.extractContents();
+
+    // Drop any existing value for this property inside the extracted fragment,
+    // so re-applying replaces the old value instead of nesting another span
+    // every time the user picks a different font / colour.
+    stripProperty(contents, prop);
+
     span.appendChild(contents);
-    range.insertNode(span);
-    
-    // Select the newly inserted span content
+
+    // If the fragment turned out to be a single span that no longer carries
+    // any inline style, reuse it rather than wrapping span-in-span.
+    let node: HTMLElement = span;
+    if (span.childNodes.length === 1) {
+      const only = span.firstElementChild as HTMLElement | null;
+      if (only && only.tagName === 'SPAN' && !only.getAttribute('style')) {
+        only.style.setProperty(prop, value);
+        node = only;
+      }
+    }
+
+    range.insertNode(node);
+
+    // Select the newly inserted content so the toolbar keeps tracking it.
     const newRange = document.createRange();
-    newRange.selectNodeContents(span);
+    newRange.selectNodeContents(node);
     sel.removeAllRanges();
     sel.addRange(newRange);
-    
+
     // Capture the new selection
     savedRange = newRange.cloneRange();
+
+    // Now retire the fully-covered ancestors. Unwrapping moves children around
+    // but keeps the node objects, so `node` and the selection stay intact.
+    for (const el of covered) {
+      if (!el.isConnected) continue;
+      el.style.removeProperty(prop);
+      if (!el.getAttribute('style')) unwrapElement(el);
+    }
   } catch {
     // Fall back to styling the whole block.
     const block = getCurrentBlock();

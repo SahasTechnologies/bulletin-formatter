@@ -130,6 +130,7 @@ export default function Toolbar(props: ToolbarProps) {
   const [fontLimit, setFontLimit] = useState(FONT_PAGE);
   const [linkUrl, setLinkUrl] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  const fontSearchRef = useRef<HTMLInputElement>(null);
   
   // Track when we're manually applying styles to avoid reading stale values
   const isApplyingStyleRef = useRef(false);
@@ -203,43 +204,26 @@ export default function Toolbar(props: ToolbarProps) {
 
   const applyFont = (family: string) => {
     isApplyingStyleRef.current = true;
-    
-    const doApply = () => {
-      // Apply via a CSS span with a fallback stack. `execCommand('fontName')`
-      // would emit a bare `font-family: X` with no fallback, so while the
-      // webfont is still downloading Chrome renders the default serif —
-      // the "every font looks like Times" bug.
-      ed.applyInlineStyle('font-family', `"${family}", "Red Hat Text", sans-serif`);
-      
-      // Force editor focus to ensure changes are applied
-      const editor = ed.getEditor();
-      if (editor) editor.focus();
-      
-      setTimeout(() => {
-        isApplyingStyleRef.current = false;
-      }, 50);
-    };
-    
-    // Load the font first if it's a Google Font
-    if (isGoogleFont(family)) {
-      loadFont(family);
-      // Wait for the font to be ready before applying the style
-      if (document.fonts) {
-        document.fonts.load(`400 16px "${family}"`).then(() => {
-          doApply();
-        }).catch(() => {
-          // If font loading fails, apply anyway after a short delay
-          setTimeout(doApply, 100);
-        });
-      } else {
-        // Fallback if Font Loading API isn't available
-        setTimeout(doApply, 100);
-      }
-    } else {
-      // Non-Google font, apply immediately
-      doApply();
-    }
-    
+
+    // Start the webfont download, but do NOT wait on it. The stack below names
+    // the family first, so the browser re-renders with the real font the
+    // moment it arrives; waiting on a promise just opens a window in which the
+    // selection can be lost before the style is ever applied.
+    if (isGoogleFont(family)) loadFont(family);
+
+    // Apply via a CSS span with a fallback stack. `execCommand('fontName')`
+    // would emit a bare `font-family: X` with no fallback, so while the
+    // webfont is still downloading Chrome renders the default serif —
+    // the "every font looks like Times" bug.
+    ed.applyInlineStyle('font-family', `"${family}", "Red Hat Text", sans-serif`);
+
+    const editor = ed.getEditor();
+    if (editor) editor.focus();
+
+    setTimeout(() => {
+      isApplyingStyleRef.current = false;
+    }, 50);
+
     setFont(family);
     setOpen(null);
   };
@@ -331,13 +315,20 @@ export default function Toolbar(props: ToolbarProps) {
       {/* Font family — all 1,946 Google Fonts */}
       <Dropdown
         open={open === 'font'}
-        onOpenChange={(v) => setOpen(v ? 'font' : null)}
+        onOpenChange={(v) => {
+          setOpen(v ? 'font' : null);
+          // Only move focus into the search box when no text is selected —
+          // focusing it while a selection exists destroys that selection.
+          if (v && !ed.hasSelection()) {
+            requestAnimationFrame(() => fontSearchRef.current?.focus());
+          }
+        }}
         label={<span className="max-w-[130px] truncate text-[13px]">{font}</span>}
         width={290}
       >
         <div className="sticky top-0 border-b border-gdoc-border bg-white px-2 py-1.5">
           <input
-            autoFocus
+            ref={fontSearchRef}
             type="text"
             value={fontQuery}
             onChange={(e) => {

@@ -40,7 +40,7 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [showRuler, setShowRuler] = useState(true);
   const [toolbarHidden, setToolbarHidden] = useState(false);
-  const [pageName, setPageName] = useState<PageSizeName>('Letter');
+  const [pageName, setPageName] = useState<PageSizeName>('A4');
 
   const [findQuery, setFindQuery] = useState('');
   const [findStatus, setFindStatus] = useState('');
