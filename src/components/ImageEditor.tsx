@@ -1,12 +1,15 @@
-import { useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { Settings } from 'lucide-react';
 
 interface ImageEditorProps {
   image: HTMLImageElement;
   onUpdate: () => void;
+  zoom: number;
+  /** The scroll container that holds the image; used as the positioning origin. */
+  containerRef: React.RefObject<HTMLDivElement>;
 }
 
-export default function ImageEditor({ image, onUpdate }: ImageEditorProps) {
+export default function ImageEditor({ image, onUpdate, zoom, containerRef }: ImageEditorProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [keepAspectRatio, setKeepAspectRatio] = useState(true);
   const [borderRadius, setBorderRadius] = useState(0);
@@ -15,6 +18,43 @@ export default function ImageEditor({ image, onUpdate }: ImageEditorProps) {
   const [startSize, setStartSize] = useState({ width: 0, height: 0 });
   const [handle, setHandle] = useState<string | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // The on-screen box of the image, in the scroll container's coordinate space.
+  const [rect, setRect] = useState({ top: 0, left: 0, width: 0, height: 0 });
+
+  const measure = useCallback(() => {
+    const container = containerRef.current;
+    if (!container || !image.isConnected) return;
+    const imgR = image.getBoundingClientRect();
+    const cR = container.getBoundingClientRect();
+    setRect({
+      // Convert viewport coords into the scroll container's content coords.
+      left: imgR.left - cR.left + container.scrollLeft,
+      top: imgR.top - cR.top + container.scrollTop,
+      width: imgR.width,
+      height: imgR.height,
+    });
+  }, [containerRef, image]);
+
+  useEffect(() => {
+    measure();
+    const container = containerRef.current;
+    window.addEventListener('resize', measure);
+    container?.addEventListener('scroll', measure);
+    // Observe the image's box so resizing / zooming re-measures without waiting.
+    let ro: ResizeObserver | null = null;
+    try {
+      ro = new ResizeObserver(measure);
+      ro.observe(image);
+    } catch {
+      /* older browsers / non-element targets */
+    }
+    return () => {
+      window.removeEventListener('resize', measure);
+      container?.removeEventListener('scroll', measure);
+      ro?.disconnect();
+    };
+  }, [measure, containerRef, image]);
 
   useEffect(() => {
     // Get initial border radius from image style
@@ -30,7 +70,7 @@ export default function ImageEditor({ image, onUpdate }: ImageEditorProps) {
   const handleMouseDown = (e: React.MouseEvent, handlePosition: string) => {
     e.preventDefault();
     e.stopPropagation();
-    
+
     setIsResizing(true);
     setHandle(handlePosition);
     setStartPos({ x: e.clientX, y: e.clientY });
@@ -43,11 +83,15 @@ export default function ImageEditor({ image, onUpdate }: ImageEditorProps) {
   useEffect(() => {
     if (!isResizing) return;
 
+    // Convert screen-pixel deltas into the image's own (unscaled) pixels so
+    // dragging stays 1:1 even when the page is zoomed.
+    const scale = zoom / 100 || 1;
+
     const handleMouseMove = (e: MouseEvent) => {
       if (!handle) return;
 
-      const deltaX = e.clientX - startPos.x;
-      const deltaY = e.clientY - startPos.y;
+      const deltaX = (e.clientX - startPos.x) / scale;
+      const deltaY = (e.clientY - startPos.y) / scale;
 
       let newWidth = startSize.width;
       let newHeight = startSize.height;
@@ -56,8 +100,8 @@ export default function ImageEditor({ image, onUpdate }: ImageEditorProps) {
       switch (handle) {
         case 'nw':
           newWidth = startSize.width - deltaX;
-          newHeight = keepAspectRatio 
-            ? (newWidth / startSize.width) * startSize.height 
+          newHeight = keepAspectRatio
+            ? (newWidth / startSize.width) * startSize.height
             : startSize.height - deltaY;
           break;
         case 'n':
@@ -68,8 +112,8 @@ export default function ImageEditor({ image, onUpdate }: ImageEditorProps) {
           break;
         case 'ne':
           newWidth = startSize.width + deltaX;
-          newHeight = keepAspectRatio 
-            ? (newWidth / startSize.width) * startSize.height 
+          newHeight = keepAspectRatio
+            ? (newWidth / startSize.width) * startSize.height
             : startSize.height - deltaY;
           break;
         case 'w':
@@ -86,8 +130,8 @@ export default function ImageEditor({ image, onUpdate }: ImageEditorProps) {
           break;
         case 'sw':
           newWidth = startSize.width - deltaX;
-          newHeight = keepAspectRatio 
-            ? (newWidth / startSize.width) * startSize.height 
+          newHeight = keepAspectRatio
+            ? (newWidth / startSize.width) * startSize.height
             : startSize.height + deltaY;
           break;
         case 's':
@@ -98,8 +142,8 @@ export default function ImageEditor({ image, onUpdate }: ImageEditorProps) {
           break;
         case 'se':
           newWidth = startSize.width + deltaX;
-          newHeight = keepAspectRatio 
-            ? (newWidth / startSize.width) * startSize.height 
+          newHeight = keepAspectRatio
+            ? (newWidth / startSize.width) * startSize.height
             : startSize.height + deltaY;
           break;
       }
@@ -125,7 +169,7 @@ export default function ImageEditor({ image, onUpdate }: ImageEditorProps) {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isResizing, handle, startPos, startSize, keepAspectRatio, image, onUpdate]);
+  }, [isResizing, handle, startPos, startSize, keepAspectRatio, image, onUpdate, zoom]);
 
   const handles = [
     { position: 'nw', cursor: 'nwse-resize', style: 'top-0 left-0 -translate-x-1/2 -translate-y-1/2' },
@@ -144,10 +188,10 @@ export default function ImageEditor({ image, onUpdate }: ImageEditorProps) {
         ref={wrapperRef}
         className="absolute border-2 border-bb-500 pointer-events-none"
         style={{
-          top: `${image.offsetTop}px`,
-          left: `${image.offsetLeft}px`,
-          width: `${image.offsetWidth}px`,
-          height: `${image.offsetHeight}px`,
+          top: `${rect.top}px`,
+          left: `${rect.left}px`,
+          width: `${rect.width}px`,
+          height: `${rect.height}px`,
         }}
       >
         {/* Resize handles */}

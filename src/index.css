@@ -39,6 +39,9 @@ body {
 .doc-surface {
   outline: none;
   min-height: 1056px; /* 11in x 96dpi - US Letter */
+  /* Lock the metric used by highlights and underlines so different Google Fonts
+     render with the same band thickness instead of scaling per-font. */
+  line-height: 1.5;
 }
 .doc-surface:empty::before {
   content: attr(data-placeholder);
@@ -50,6 +53,35 @@ body {
 .doc-paper {
   background: #fff;
   box-shadow: 0 1px 3px rgba(60, 64, 67, 0.15), 0 4px 8px 3px rgba(60, 64, 67, 0.05);
+}
+
+/* Consistent underline across fonts. execCommand('underline') emits a bare
+   text-decoration-line: underline, whose thickness and offset would otherwise
+   follow each font's own metrics. */
+.doc-surface u,
+.doc-surface [style*="text-decoration"]:not([style*="text-decoration: none"]) {
+  text-decoration: underline !important;
+  text-decoration-thickness: 1.5px !important;
+  text-underline-offset: 2.5px !important;
+}
+/* Keep decoration bands visually uniform regardless of the selected font.
+   Use a fixed line-height on inline runs and avoid font-specific decoration
+   metrics where the browser supports them. */
+.doc-surface mark,
+.doc-surface [style*="background-color"] {
+  display: inline;
+  padding: 1px 0;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.doc-surface [style*="background-color"] {
+  background-clip: padding-box;
+}
+.doc-surface u,
+.doc-surface s,
+.doc-surface strike,
+.doc-surface [style*="text-decoration"] {
+  text-decoration-skip-ink: none;
 }
 
 /* Toolbar / menu dropdown fade-in */

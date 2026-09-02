@@ -44,6 +44,9 @@ const INITIAL_HTML = `
   </p>
 `;
 
+const RULER_SIZE = 28; // px thickness shared by the top and left rulers
+const PAGE_GAP = 32; // flex gap (gap-8) between page sheets
+
 interface DocumentCanvasProps {
   zoom: number;
   spellCheck: boolean;
@@ -110,80 +113,154 @@ export default function DocumentCanvas({
   const pageHeight = page.height;
 
   return (
-    <div ref={containerRef} className="relative flex-1 overflow-auto bg-gdoc-bg">
-      {/* Ruler - Fixed at top, doesn't scroll with content */}
+    <div ref={containerRef} className="relative flex-1 overflow-auto bg-[#f1f0ee]">
+      {/* Ruler: a full-width white bar across the top of the canvas. The tick
+          box is centred so it lines up with the page, and a downward triangle
+          marks the page's right edge. */}
       {showRuler && (
-        <div className="no-print sticky top-0 z-20 flex h-6 items-end border-b border-gdoc-border bg-gdoc-bg text-[10px] text-gdoc-muted">
-          <div className="mx-auto flex max-w-[1100px] justify-center px-12" style={{ width: '100%' }}>
-            <div style={{ width: `${page.width * (zoom / 100)}px`, display: 'flex' }}>
-              <div style={{ width: `${96 * (zoom / 100)}px` }} /> {/* Left padding spacer */}
-              <div className="flex flex-1">
-                {Array.from({ length: 20 }, (_, i) => (
-                  <div key={i} className="relative flex-1 border-l border-gdoc-border/70">
-                    <span className="absolute -top-0.5 -translate-x-1/2">{i + 1}</span>
-                  </div>
-                ))}
-              </div>
+        <div className="no-print sticky top-0 z-20 border-b border-gdoc-border bg-white">
+          <div
+            className="relative mx-auto select-none text-[10px] text-gdoc-muted"
+            style={{ width: `${page.width * (zoom / 100)}px`, height: `${RULER_SIZE}px` }}
+          >
+            {/* Tick marks + numbers across the content area. */}
+            <div
+              className="absolute bottom-0 flex"
+              style={{
+                left: `${96 * (zoom / 100)}px`,
+                width: `${(page.width - 192) * (zoom / 100)}px`,
+              }}
+            >
+              {Array.from({ length: Math.max(2, Math.ceil((page.width - 192) / 96)) }, (_, i) => (
+                <div key={i} className="relative flex-1">
+                  <span className="absolute bottom-[7px] left-1 leading-none">{i + 1}</span>
+                  <div className="absolute bottom-0 h-[5px] w-px bg-gdoc-muted/40" />
+                </div>
+              ))}
+            </div>
+
+            {/* Page-width marker: blue downward triangle at the right edge. */}
+            <div
+              className="absolute -bottom-1"
+              style={{ left: 'calc(100% - 12px)' }}
+              title="Right edge of the page"
+            >
+              <div
+                className="h-0 w-0 border-x-[6px] border-t-[7px]"
+                style={{
+                  borderLeftColor: 'transparent',
+                  borderRightColor: 'transparent',
+                  borderTopColor: '#1a73e8',
+                }}
+              />
             </div>
           </div>
         </div>
       )}
 
-      <div className="mx-auto flex flex-col max-w-[1100px] items-center px-12 py-8 gap-8">
-        {Array.from({ length: pages }, (_, pageIndex) => (
-          <div
-            key={pageIndex}
-            className="doc-paper rounded-sm relative"
-            style={{
-              width: `${page.width}px`,
-              height: `${pageHeight}px`,
-              transform: `scale(${zoom / 100})`,
-              transformOrigin: 'top center',
-            }}
-          >
-            {pageIndex === 0 ? (
-              <div
-                ref={ref}
-                contentEditable
-                suppressContentEditableWarning
-                spellCheck={spellCheck}
-                data-placeholder="Start writing…"
-                onInput={onInput}
-                className="doc-surface rounded-sm px-[96px] py-[80px] leading-relaxed"
-                style={{ minHeight: `${pageHeight}px` }}
-              />
-            ) : (
-              <div
-                className="doc-surface rounded-sm px-[96px] py-[80px] leading-relaxed"
-                style={{ 
-                  minHeight: `${pageHeight}px`,
-                  color: '#a8a29a',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}
-              >
-                Page {pageIndex + 1}
-              </div>
-            )}
-          </div>
-        ))}
+      <div className="mx-auto max-w-[1100px] px-12">
+        <div className="relative flex flex-col items-center gap-8 py-8">
+          {Array.from({ length: pages }, (_, pageIndex) => (
+            <div
+              key={pageIndex}
+              className="doc-paper rounded-sm relative"
+              style={{
+                width: `${page.width}px`,
+                height: `${pageHeight}px`,
+                transform: `scale(${zoom / 100})`,
+                transformOrigin: 'top center',
+              }}
+            >
+              {pageIndex === 0 ? (
+                <div
+                  ref={ref}
+                  contentEditable
+                  suppressContentEditableWarning
+                  spellCheck={spellCheck}
+                  data-placeholder="Start writing…"
+                  onInput={onInput}
+                  className="doc-surface rounded-sm px-[96px] py-[80px] leading-relaxed"
+                  style={{ minHeight: `${pageHeight}px` }}
+                />
+              ) : (
+                <div
+                  className="doc-surface rounded-sm px-[96px] py-[80px] leading-relaxed"
+                  style={{
+                    minHeight: `${pageHeight}px`,
+                    color: '#a8a29a',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  Page {pageIndex + 1}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
 
-      {/* Image editor overlay */}
-      {selectedImage && ref.current?.contains(selectedImage) && (
-        <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 30 }}>
-          <div className="relative mx-auto max-w-[1100px] h-full px-12 py-8">
-            <div style={{ 
-              transform: `scale(${zoom / 100})`,
-              transformOrigin: 'top center',
-              width: `${page.width}px`,
-              margin: '0 auto',
-            }}>
-              <ImageEditor image={selectedImage} onUpdate={() => onInput()} />
-            </div>
+      {/* Vertical ruler: a full-height white rail flush against the left edge
+          of the canvas, starting just below the top ruler and running past the
+          page stack (it lives outside the centred column on purpose). */}
+      {showRuler && (
+        <div
+          className="no-print absolute z-10 select-none border-r border-gdoc-border bg-white text-[10px] text-gdoc-muted"
+          style={{
+            top: `${RULER_SIZE}px`,
+            left: 0,
+            width: `${RULER_SIZE}px`,
+            height: `${
+              pages * page.height * (zoom / 100) + (pages - 1) * PAGE_GAP + 2 * PAGE_GAP
+            }px`,
+          }}
+        >
+          {/* Tick marks + numbers down the content area. */}
+          <div
+            className="absolute flex flex-col"
+            style={{
+              top: `${PAGE_GAP + 80 * (zoom / 100)}px`,
+              bottom: `${PAGE_GAP + 80 * (zoom / 100)}px`,
+              left: 0,
+              right: 0,
+            }}
+          >
+            {Array.from({ length: Math.max(2, Math.ceil((page.height - 160) / 96)) }, (_, i) => (
+              <div key={i} className="relative flex-1">
+                <span className="absolute left-1.5 top-0.5 leading-none">{i + 1}</span>
+                <div className="absolute right-0 top-0 h-px w-[5px] bg-gdoc-muted/40" />
+              </div>
+            ))}
+          </div>
+
+          {/* Page-height marker: blue triangle at the bottom edge of page 1. */}
+          <div
+            className="absolute right-0"
+            style={{ top: `calc(${PAGE_GAP + page.height * (zoom / 100)}px - 3px)` }}
+            title="Bottom edge of the page"
+          >
+            <div
+              className="h-0 w-0 border-y-[6px] border-l-[7px]"
+              style={{
+                borderTopColor: 'transparent',
+                borderBottomColor: 'transparent',
+                borderLeftColor: '#1a73e8',
+              }}
+            />
           </div>
         </div>
+      )}
+
+      {/* Image editor overlay — rendered as a child of the scroll container so
+          the border/handles use the same coordinate space as the image. */}
+      {selectedImage && ref.current?.contains(selectedImage) && (
+        <ImageEditor
+          image={selectedImage}
+          onUpdate={() => onInput()}
+          zoom={zoom}
+          containerRef={containerRef}
+        />
       )}
     </div>
   );

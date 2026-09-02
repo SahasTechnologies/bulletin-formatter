@@ -123,16 +123,16 @@ function topBlocks(): HTMLElement[] {
 
 /** Blocks touched by the current selection. */
 function blocksInSelection(): HTMLElement[] {
-  if (!savedRange) return [];
-  const blocks = topBlocks();
+  if (!savedRange || !editorEl) return [];
+  const blocks = Array.from(editorEl.querySelectorAll<HTMLElement>('p,h1,h2,h3,h4,h5,h6,li,blockquote,div'));
   const hit = blocks.filter((b) => {
     try {
-      return savedRange!.intersectsNode(b);
+      return savedRange!.intersectsNode(b) && (b.textContent?.length ?? 0) > 0;
     } catch {
       return false;
     }
   });
-  return hit.length ? hit : blocks.slice(0, 0);
+  return hit.length ? hit : [];
 }
 
 /** Walk up from the caret to the top-level block that contains it. */
@@ -213,10 +213,22 @@ export function applyInlineStyle(prop: string, value: string): void {
 
   const blocks = blocksInSelection();
 
+  // A selection that crosses block boundaries must be styled per text run.
+  // Applying a block style would make mixed selections lose their inline
+  // formatting and, for font changes, only affect the block containing the
+  // caret in some browsers. execCommand's CSS implementation handles each
+  // selected run consistently and preserves existing properties.
   if (blocks.length > 1) {
-    for (const b of blocks) b.style.setProperty(prop, value);
-    captureSelection();
-    return;
+    try {
+      document.execCommand('styleWithCSS', false, 'true');
+      document.execCommand(prop === 'background-color' ? 'hiliteColor' : 'fontName', false, value);
+      captureSelection();
+      return;
+    } catch {
+      for (const b of blocks) b.style.setProperty(prop, value);
+      captureSelection();
+      return;
+    }
   }
 
   // Single block (or plain text): wrap in a styled span.
@@ -247,6 +259,14 @@ export function applyInlineStyle(prop: string, value: string): void {
 
     span.appendChild(contents);
 
+    // `extractContents` may leave empty span wrappers inside the fragment
+    // when the selection boundary sits inside an existing styled run. Sweep
+    // them out before we collapse the new span, otherwise they would still be
+    // there after the cleanup at the end of this function.
+    for (const child of Array.from(span.children)) {
+      if (child.tagName === 'SPAN' && !child.firstChild) span.removeChild(child);
+    }
+
     // If the fragment turned out to be a single span that no longer carries
     // any inline style, reuse it rather than wrapping span-in-span.
     let node: HTMLElement = span;
@@ -269,12 +289,58 @@ export function applyInlineStyle(prop: string, value: string): void {
     // Capture the new selection
     savedRange = newRange.cloneRange();
 
-    // Now retire the fully-covered ancestors. Unwrapping moves children around
-    // but keeps the node objects, so `node` and the selection stay intact.
+    // Now retire the fully-covered ancestors. Every *other* declaration they
+    // carried (underline, highlight colour, weight, etc.) is moved onto `node`
+    // so changing one property does not silently strip the rest — `text-
+    // decoration` and `background-color` do not inherit, so leaving them on a
+    // separate parent span would make them disappear from the new run.
+    const carry: string[] = [];
     for (const el of covered) {
       if (!el.isConnected) continue;
-      el.style.removeProperty(prop);
-      if (!el.getAttribute('style')) unwrapElement(el);
+      const decls = (el.getAttribute('style') ?? '')
+        .split(';')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      for (const d of decls) {
+        const name = d.split(':')[0]?.trim();
+        if (!name) continue;
+        if (name.toLowerCase() === prop) {
+          el.style.removeProperty(name);
+        } else {
+          carry.push(d);
+        }
+      }
+      // An ancestor that has been reduced to nothing but a wrapper around
+      // `node` is dead weight even if it still carries a style declaration —
+      // the carried styles have already been moved onto `node`, and
+      // `text-decoration` does not inherit anyway, so the wrapper has nothing
+      // left to contribute.
+      if (!el.firstChild || el.firstElementChild === node) unwrapElement(el);
+    }
+
+    // `extractContents` may have emptied *other* spans (those that were
+    // partly covered by the selection but not fully contained). Those never
+    // land in `covered`, but they now sit next to `node` with no content.
+    // Sweep up any empty span siblings at every level up to the editor.
+    {
+      let p: HTMLElement | null = node.parentElement;
+      while (p && p !== root) {
+        const siblings = Array.from(p.children);
+        for (const sib of siblings) {
+          if (sib === node) continue;
+          if (sib.tagName === 'SPAN' && !sib.firstChild) unwrapElement(sib as HTMLElement);
+        }
+        p = p.parentElement;
+      }
+    }
+    for (const d of carry) {
+      const idx = d.indexOf(':');
+      if (idx <= 0) continue;
+      const name = d.slice(0, idx).trim();
+      const value = d.slice(idx + 1).trim();
+      // `font-family` carries quoted commas; values like "1px solid red" still
+      // split fine on the first colon.
+      if (name && !name.toLowerCase().includes('unknown')) node.style.setProperty(name, value);
     }
   } catch {
     // Fall back to styling the whole block.
@@ -301,6 +367,18 @@ export function formatBlock(tag: string): void {
 
 export function clearFormatting(): void {
   exec('removeFormat');
+}
+
+/** Apply a toolbar property while preserving mixed formatting across blocks. */
+export function applyCommandStyle(command: string, value?: string): void {
+  restoreSelection();
+  try {
+    document.execCommand('styleWithCSS', false, 'true');
+    document.execCommand(command, false, value);
+  } catch {
+    /* ignore unsupported commands */
+  }
+  captureSelection();
 }
 
 /** Prompt-free link insertion using execCommand (keeps the selection intact). */

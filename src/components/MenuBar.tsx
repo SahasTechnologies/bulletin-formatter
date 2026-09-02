@@ -148,7 +148,7 @@ export default function MenuBar({
   return (
     <div
       ref={barRef}
-      className="no-print relative z-30 flex h-12 flex-shrink-0 items-center justify-between border-b border-gdoc-border bg-white px-3 font-ui"
+      className="no-print relative z-30 flex h-12 flex-shrink-0 items-center justify-between bg-white px-3 font-ui"
     >
       <div className="flex items-center gap-3">
         <img

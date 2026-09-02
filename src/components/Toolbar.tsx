@@ -254,10 +254,11 @@ export default function Toolbar(props: ToolbarProps) {
   const activeStyle = PARAGRAPH_STYLES.find((s) => s.label === style) ?? PARAGRAPH_STYLES[0];
 
   return (
-    <div
-      ref={rootRef}
-      className="no-print relative z-20 flex flex-wrap items-center gap-0.5 border-b border-gdoc-border bg-white px-2 py-1 font-ui"
-    >
+    <div className="no-print z-30 flex justify-center bg-white px-4 py-2 font-ui">
+      <div
+        ref={rootRef}
+        className="relative flex max-w-full flex-wrap items-center gap-0 rounded-full border border-bb-100 bg-bb-50 px-2 py-1 text-bb-900 shadow-sm"
+      >
       <ToolBtn
         title="Find in document (Ctrl + F)"
         active={searchOpen}
@@ -302,7 +303,7 @@ export default function Toolbar(props: ToolbarProps) {
             onClick={() => applyStyle(s)}
             className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left hover:bg-gdoc-hover"
           >
-            <span style={s.preview} className="truncate text-[#2b2622]">
+            <span style={s.preview} className="truncate">
               {s.label}
             </span>
             {style === s.label && <Check size={14} className="flex-none text-bb-600" />}
@@ -423,6 +424,7 @@ export default function Toolbar(props: ToolbarProps) {
       <Dropdown
         open={open === 'textColor'}
         onOpenChange={(v) => setOpen(v ? 'textColor' : null)}
+        title="Text colour"
         label={
           <span className="flex flex-col items-center leading-none">
             <Type size={16} />
@@ -438,7 +440,7 @@ export default function Toolbar(props: ToolbarProps) {
               title={c}
               onMouseDown={keepSelection}
               onClick={() => {
-                ed.exec('foreColor', c);
+                ed.applyCommandStyle('foreColor', c);
                 setOpen(null);
               }}
               className="h-5 w-5 rounded-sm border border-gdoc-border transition-transform hover:scale-110"
@@ -451,10 +453,11 @@ export default function Toolbar(props: ToolbarProps) {
       <Dropdown
         open={open === 'highlight'}
         onOpenChange={(v) => setOpen(v ? 'highlight' : null)}
+        title="Highlight colour"
         label={
           <span className="flex flex-col items-center leading-none">
             <Highlighter size={16} />
-            <span className="mt-0.5 h-[3px] w-4 rounded-sm bg-bb-300" />
+            <span className="mt-0.5 h-[3px] w-4 rounded-sm bg-bb-400" />
           </span>
         }
         width={240}
@@ -466,8 +469,8 @@ export default function Toolbar(props: ToolbarProps) {
               title={c === 'transparent' ? 'No highlight' : c}
               onMouseDown={keepSelection}
               onClick={() => {
-                if (c === 'transparent') ed.exec('removeFormat');
-                else ed.exec('hiliteColor', c);
+                if (c === 'transparent') ed.applyCommandStyle('removeFormat');
+                else ed.applyCommandStyle('hiliteColor', c);
                 setOpen(null);
               }}
               className="h-5 w-5 rounded-sm border border-gdoc-border transition-transform hover:scale-110"
@@ -618,6 +621,7 @@ export default function Toolbar(props: ToolbarProps) {
           <ChevronUp size={18} />
         </ToolBtn>
       </div>
+      </div>
     </div>
   );
 }
@@ -625,7 +629,7 @@ export default function Toolbar(props: ToolbarProps) {
 /* ---------- shared bits ---------- */
 
 function Sep() {
-  return <div className="mx-1 h-5 w-px bg-gdoc-border" />;
+  return <div className="mx-1 h-5 w-px bg-bb-300" />;
 }
 
 function ToolBtn({
@@ -645,7 +649,7 @@ function ToolBtn({
       onClick={onClick}
       onMouseDown={keepSelection}
       className={`grid h-8 w-8 place-items-center rounded transition-colors ${
-        active ? 'bg-gdoc-active text-bb-700' : 'text-gdoc-muted hover:bg-gdoc-hover'
+        active ? 'bg-bb-400 text-bb-900' : 'text-bb-900 hover:bg-bb-200/60'
       }`}
     >
       {children}
@@ -694,7 +698,7 @@ function ZoomControl({
 
   return (
     <div ref={ref} className="relative">
-      <div className="flex h-8 items-center rounded text-gdoc-muted hover:bg-gdoc-hover">
+      <div className="flex h-8 items-center rounded text-bb-900 hover:bg-bb-200/60">
         <button
           onMouseDown={keepSelection}
           onClick={() => setZoom((z) => Math.max(50, z - 10))}
@@ -721,7 +725,7 @@ function ZoomControl({
         </button>
       </div>
       {open && (
-        <div className="dropdown absolute left-0 top-full z-30 mt-1 w-40 rounded-md border border-gdoc-border bg-white py-1 shadow-lg">
+        <div className="dropdown absolute left-0 top-full z-30 mt-1 w-40 rounded-md border border-gdoc-border bg-white py-1 text-[#2b2622] shadow-lg">
           {[50, 75, 90, 100, 125, 150, 200].map((p) => (
             <button
               key={p}
@@ -765,8 +769,8 @@ function Dropdown({
         title={title}
         onMouseDown={keepSelection}
         onClick={() => onOpenChange(!open)}
-        className={`flex h-8 min-w-8 items-center justify-center gap-1 rounded px-2 transition-colors hover:bg-gdoc-hover ${
-          open ? 'bg-gdoc-active' : ''
+        className={`flex h-8 min-w-8 items-center justify-center gap-1 rounded px-2 transition-colors hover:bg-bb-200/60 ${
+          open ? 'bg-bb-200' : ''
         }`}
       >
         {label}
@@ -774,7 +778,7 @@ function Dropdown({
       </button>
       {open && (
         <div
-          className="dropdown absolute left-0 top-full z-30 mt-1 overflow-hidden rounded-md border border-gdoc-border bg-white shadow-lg"
+          className="dropdown absolute left-0 top-full z-30 mt-1 overflow-hidden rounded-md border border-gdoc-border bg-white text-[#2b2622] shadow-lg"
           style={{ width }}
         >
           {children}
