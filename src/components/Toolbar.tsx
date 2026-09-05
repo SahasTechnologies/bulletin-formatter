@@ -34,7 +34,6 @@ import {
   Minus,
   Plus,
   Rows3,
-  Percent,
   Pilcrow,
   CaseSensitive,
   ALargeSmall,
@@ -504,6 +503,51 @@ export default function Toolbar(props: ToolbarProps) {
 
   const collapsedKeys = ALL_KEYS.filter((k) => touch.has(k));
 
+  /* -------- overflow strip: scroll affordances --------
+     The strip hides its scrollbar (rounded pill look), so fade the leading
+     edge while more tools sit off-screen and let a vertical wheel scroll it
+     horizontally. */
+  const stripRef = useRef<HTMLDivElement>(null);
+  const [stripEdge, setStripEdge] = useState({ left: false, right: false });
+
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el) {
+      setStripEdge({ left: false, right: false });
+      return;
+    }
+    const update = () => {
+      const max = el.scrollWidth - el.clientWidth;
+      setStripEdge({ left: el.scrollLeft > 2, right: el.scrollLeft < max - 2 });
+    };
+    update();
+    el.addEventListener('scroll', update);
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    const onWheel = (e: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth + 1) return;
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      const before = el.scrollLeft;
+      el.scrollLeft += e.deltaY;
+      if (el.scrollLeft !== before) e.preventDefault();
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      el.removeEventListener('scroll', update);
+      el.removeEventListener('wheel', onWheel);
+      ro.disconnect();
+    };
+  }, [moreOpen]);
+
+  const stripMask = (() => {
+    const stops: string[] = [];
+    if (stripEdge.left) stops.push('transparent 0, #000 18px');
+    else stops.push('#000 0');
+    if (stripEdge.right) stops.push('#000 calc(100% - 18px), transparent 100%');
+    else stops.push('#000 100%');
+    return `linear-gradient(to right, ${stops.join(', ')})`;
+  })();
+
   return (
     <div ref={outerRef} className="no-print z-30 flex flex-col items-center bg-white px-2 py-2 font-ui">
       <div
@@ -532,7 +576,11 @@ export default function Toolbar(props: ToolbarProps) {
       {/* Horizontal overflow strip — icons only, spans the full width. */}
       {moreOpen && (
         <div className="mt-1.5 flex w-full justify-center">
-          <div className="no-scrollbar flex h-10 w-full max-w-full flex-nowrap items-center gap-1 overflow-x-auto rounded-full border border-bb-100 bg-bb-50 px-3 text-bb-900 shadow-sm">
+          <div
+            ref={stripRef}
+            className="no-scrollbar flex h-10 w-full max-w-full flex-nowrap items-center gap-1 overflow-x-auto rounded-full border border-bb-100 bg-bb-50 px-3 text-bb-900 shadow-sm"
+            style={{ maskImage: stripMask, WebkitMaskImage: stripMask }}
+          >
             {collapsedKeys.length > 0 && collapsedKeys.map((k) => wrapped(k, trigger(k, false, true)))}
             {collapsedKeys.length > 0 && <Sep />}
             <ToolBtn title="Strikethrough" onClick={() => ed.exec('strikeThrough')}><Strikethrough size={18} /></ToolBtn>
@@ -654,8 +702,7 @@ function ZoomControl({
           >
             {[50, 75, 90, 100, 125, 150, 200].map((p) => (
               <button key={p} onMouseDown={keepSelection} onClick={() => { setZoom(p); onOpenChange(false); }}
-                className="flex w-full items-center gap-3 px-3 py-1.5 text-left text-[13px] hover:bg-gdoc-hover">
-                <Percent size={15} className="flex-none text-bb-600" />
+                className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[13px] hover:bg-gdoc-hover">
                 <span className="flex-1">{p}%</span>
                 {zoom === p && <Check size={14} className="flex-none text-bb-600" />}
               </button>

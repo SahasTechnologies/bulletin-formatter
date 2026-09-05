@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, ChevronUp, FileText } from 'lucide-react';
+import { X, ChevronUp, FileText, History, RotateCcw } from 'lucide-react';
 import MenuBar, { menuSearchEntries } from './components/MenuBar';
 import Toolbar from './components/Toolbar';
 import DocumentCanvas from './components/DocumentCanvas';
@@ -57,7 +57,7 @@ const SHORTCUTS: [string, string][] = [
   ['Ctrl + /', 'This shortcut list'],
 ];
 
-type DialogKind = null | 'about' | 'shortcuts' | 'wordcount' | 'search' | 'versions' | 'details' | 'translate';
+type DialogKind = null | 'about' | 'shortcuts' | 'wordcount' | 'search' | 'details' | 'translate';
 
 export default function App() {
   const [screen, setScreen] = useState<'home' | 'editor'>('home');
@@ -86,6 +86,11 @@ export default function App() {
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [linkRequest, setLinkRequest] = useState(0);
   const [menuTick, setMenuTick] = useState(0); // bumps to re-run the menu search
+  /** End-of-document tombstone (small black square on the last page). */
+  const [tombstone, setTombstone] = useState(false);
+  const tombstoneRef = useRef(false);
+  /** Right-hand panel with saved versions (File > Version history). */
+  const [versionsOpen, setVersionsOpen] = useState(false);
 
   /** Version of the document content passed to the canvas (bump = reload). */
   const [canvasRev, setCanvasRev] = useState(0);
@@ -131,13 +136,33 @@ export default function App() {
       updatedAt: Date.now(),
     };
     if (boxesRef.current) doc.boxes = boxesRef.current;
+    if (tombstoneRef.current) doc.tombstone = tombstoneRef.current;
     activeDocRef.current = doc;
     saveDoc(doc);
     // Automatic version snapshot (throttled by word-count drift in storage).
     const text = textOfHtml(content);
-    recordVersion(doc.id, doc.content, text.trim() ? text.trim().split(/\s+/).length : 0);
+    recordVersion(
+      doc.id,
+      doc.content,
+      text.trim() ? text.trim().split(/\s+/).length : 0,
+      boxesRef.current ?? undefined,
+    );
     setRecentDocs(loadRecentDocs());
   }, []);
+
+  // Keep the tombstone ref in step so persistNow (stable, ref-based) always
+  // writes the current flag.
+  useEffect(() => {
+    tombstoneRef.current = tombstone;
+  }, [tombstone]);
+
+  /** Toggle the end-of-document tombstone and save the flag immediately. */
+  const toggleTombstone = useCallback(() => {
+    const next = !tombstoneRef.current;
+    tombstoneRef.current = next;
+    setTombstone(next);
+    persistNow();
+  }, [persistNow]);
 
   /**
    * The canvas calls this on every change (typing, formatting, dragging,
@@ -176,6 +201,8 @@ export default function App() {
     setTitle(doc.title);
     docHtmlRef.current = tpl.content;
     boxesRef.current = null;
+    tombstoneRef.current = false;
+    setTombstone(false);
     setRecentDocs(saveDoc(doc));
     setScreen('editor');
   }, []);
@@ -194,6 +221,8 @@ export default function App() {
     setPageName(doc.page === 'Letter' ? 'Letter' : 'A4');
     docHtmlRef.current = doc.content ?? '';
     boxesRef.current = doc.boxes ?? null;
+    tombstoneRef.current = doc.tombstone ?? false;
+    setTombstone(doc.tombstone ?? false);
     setRecentDocs(saveDoc(refreshed));
     setScreen('editor');
   }, []);
@@ -275,6 +304,8 @@ export default function App() {
       setPageName(doc.page === 'Letter' ? 'Letter' : 'A4');
       docHtmlRef.current = parsed.content ?? '';
       boxesRef.current = parsed.boxes ?? null;
+      tombstoneRef.current = false;
+      setTombstone(false);
       setRecentDocs(saveDoc(doc));
       setScreen('editor');
     };
@@ -411,7 +442,10 @@ export default function App() {
           break;
         }
         case 'file.versions':
-          setDialog('versions');
+          // Save first so the freshest snapshot is in the list, then open the
+          // right-hand history panel.
+          persistNow();
+          setVersionsOpen(true);
           break;
         case 'file.details':
           setDialog('details');
@@ -524,6 +558,9 @@ export default function App() {
         case 'tools.wordcount': setDialog('wordcount'); break;
         case 'tools.spellcheck': setSpellCheck((s) => !s); break;
         case 'tools.prefs.autocheck': setSpellCheck((s) => !s); break;
+        case 'tools.prefs.tombstone':
+          toggleTombstone();
+          break;
         case 'tools.dictionary': setDialog('translate'); break;
         case 'tools.translate': setDialog('translate'); break;
 
@@ -556,12 +593,6 @@ export default function App() {
           }
           if (id.startsWith('insert.char.')) {
             ed.exec('insertText', id.slice('insert.char.'.length));
-            break;
-          }
-          if (id.startsWith('file.lang.')) {
-            const lang = id.slice('file.lang.'.length);
-            ed.setDocLang(lang);
-            setDocLang(lang);
             break;
           }
           const styleMatch = /^style\.(.+)$/.exec(id);
@@ -599,7 +630,7 @@ export default function App() {
         }
       }
     },
-    [exportBulletin, insertImageBox, pickImage, recalc, persistNow, replaceDocContent, title, goHome, openFind, size],
+    [exportBulletin, insertImageBox, pickImage, recalc, persistNow, replaceDocContent, title, goHome, openFind, size, toggleTombstone],
   );
 
   /* ---------------- keyboard shortcuts ---------------- */
@@ -681,15 +712,15 @@ export default function App() {
       'file.page.Letter': pageName === 'Letter',
       'file.orientation.portrait': !landscape,
       'file.orientation.landscape': landscape,
-      [`file.lang.${docLang}`]: true,
       'view.mode.editing': viewMode === 'editing',
       'view.mode.viewing': viewMode === 'viewing',
       'view.ruler': showRuler,
       'view.toolbar': showToolbar,
       'tools.spellcheck': spellCheck,
       'tools.prefs.autocheck': spellCheck,
+      'tools.prefs.tombstone': tombstone,
     }),
-    [pageName, landscape, docLang, viewMode, showRuler, showToolbar, spellCheck],
+    [pageName, landscape, docLang, viewMode, showRuler, showToolbar, spellCheck, tombstone],
   );
 
   const stats = docStatsState;
@@ -711,6 +742,12 @@ export default function App() {
         />
       ) : (
         <div className="flex h-full w-full flex-col bg-gdoc-bg font-ui text-[#2b2622]">
+          {/* Match the printed paper to the selected page size + orientation:
+              zero margins so the page sheets are full-bleed. */}
+          <style>{`@page { size: ${((page.width / 96) * 25.4).toFixed(2)}mm ${(
+            (page.height / 96) * 25.4
+          ).toFixed(2)}mm; margin: 0; }`}</style>
+
           <MenuBar
             title={title}
             starred={starred}
@@ -802,21 +839,39 @@ export default function App() {
             </div>
           )}
 
-          <DocumentCanvas
-            key={activeDoc?.id ?? 'new'}
-            zoom={zoom}
-            spellCheck={spellCheck}
-            showRuler={showRuler}
-            page={page}
-            content={activeDoc?.content ?? ''}
-            boxes={activeDoc?.boxes}
-            rev={canvasRev}
-            textboxTick={textboxTick}
-            imageTick={imageTick}
-            imageSrc={imageSrc}
-            onDocChange={handleDocChange}
-            readOnly={viewMode === 'viewing'}
-          />
+          <div className="flex min-h-0 w-full flex-1">
+            <div className="flex min-w-0 flex-1">
+              <DocumentCanvas
+                key={activeDoc?.id ?? 'new'}
+                zoom={zoom}
+                spellCheck={spellCheck}
+                showRuler={showRuler}
+                page={page}
+                content={activeDoc?.content ?? ''}
+                boxes={activeDoc?.boxes}
+                rev={canvasRev}
+                textboxTick={textboxTick}
+                imageTick={imageTick}
+                imageSrc={imageSrc}
+                onDocChange={handleDocChange}
+                readOnly={viewMode === 'viewing'}
+                tombstone={tombstone}
+              />
+            </div>
+
+            {versionsOpen && (
+              <VersionPanel
+                docId={activeDocRef.current?.id ?? ''}
+                onClose={() => setVersionsOpen(false)}
+                onRestore={(content, boxesJson) => {
+                  replaceDocContent(content, boxesJson);
+                  recalc();
+                  persistNow();
+                  setVersionsOpen(false);
+                }}
+              />
+            )}
+          </div>
 
           <div className="no-print flex flex-none items-center gap-3 border-t border-gdoc-border bg-white px-3 py-1.5 text-[11px] text-gdoc-muted">
             <FileText size={12} />
@@ -880,17 +935,6 @@ export default function App() {
                 </>
               )}
               {dialog === 'search' && <MenuSearch onRun={run} tick={menuTick} />}
-              {dialog === 'versions' && (
-                <VersionHistory
-                  docId={activeDocRef.current?.id ?? ''}
-                  onRestore={(content) => {
-                    replaceDocContent(content, undefined);
-                    recalc();
-                    persistNow();
-                    setDialog(null);
-                  }}
-                />
-              )}
               {dialog === 'details' && (
                 <Details
                   title={title}
@@ -987,56 +1031,116 @@ function MenuSearch({ onRun, tick }: { onRun: (id: string) => void; tick: number
   );
 }
 
-/* ---------- File > Version history ---------- */
+/* ---------- File > Version history (right-hand panel) ---------- */
 
-function VersionHistory({
+function VersionPanel({
   docId,
+  onClose,
   onRestore,
 }: {
   docId: string;
-  onRestore: (content: string) => void;
+  onClose: () => void;
+  onRestore: (content: string, boxesJson: string | undefined) => void;
 }) {
   const versions = useMemo(() => (docId ? getVersions(docId) : []), [docId]);
+  // Newest snapshot first — the top row is the most recent save.
+  const list = useMemo(() => [...versions].reverse(), [versions]);
+  const [sel, setSel] = useState(0);
+  useEffect(() => setSel(0), [docId]);
+  const chosen = list[sel];
+
+  const excerpt = useMemo(() => {
+    if (!chosen) return '';
+    const text = textOfHtml(chosen.content).replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+    return text.length > 320 ? `${text.slice(0, 320)}…` : text;
+  }, [chosen]);
 
   return (
-    <>
-      <h2 className="mb-3 text-[16px] font-semibold">Version history</h2>
-      {versions.length === 0 ? (
-        <p className="text-[13px] text-gdoc-muted">
+    <aside className="no-print flex w-[350px] flex-none flex-col border-l border-gdoc-border bg-[#faf7f4]">
+      <div className="flex flex-none items-center gap-2 border-b border-gdoc-border px-4 py-3">
+        <History size={15} className="flex-none text-bb-600" />
+        <h2 className="flex-1 text-[13px] font-semibold text-[#2b2622]">Version history</h2>
+        <button
+          onClick={onClose}
+          title="Close version history"
+          className="rounded p-1 text-gdoc-muted hover:bg-gdoc-hover"
+        >
+          <X size={16} />
+        </button>
+      </div>
+
+      {list.length === 0 ? (
+        <div className="flex-1 overflow-y-auto px-4 py-6 text-[13px] leading-relaxed text-gdoc-muted">
           No saved versions yet. Snapshots are taken automatically as this document grows or
-          shrinks by about 15 words.
-        </p>
-      ) : (
-        <div className="max-h-64 space-y-1 overflow-y-auto">
-          {[...versions].reverse().map((v) => (
-            <div
-              key={v.at}
-              className="flex items-center justify-between gap-3 rounded border border-gdoc-border px-3 py-2 text-[13px]"
-            >
-              <div>
-                <div className="font-medium text-[#2b2622]">
-                  {new Date(v.at).toLocaleString(undefined, {
-                    day: 'numeric',
-                    month: 'short',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </div>
-                <div className="text-[11px] text-gdoc-muted">
-                  {v.words ? `${v.words.toLocaleString()} words` : 'Restored snapshot'}
-                </div>
-              </div>
-              <button
-                onClick={() => onRestore(v.content)}
-                className="rounded border border-gdoc-border px-2.5 py-1 text-[12px] font-medium text-[#2b2622] hover:bg-gdoc-hover"
-              >
-                Restore
-              </button>
-            </div>
-          ))}
+          shrinks by about 15 words — keep editing and check back here.
         </div>
+      ) : (
+        <>
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
+            {list.map((v, i) => {
+              const active = i === sel;
+              return (
+                <button
+                  key={v.at}
+                  onClick={() => setSel(i)}
+                  className={`mb-1 flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left transition-colors ${
+                    active
+                      ? 'border-bb-500 bg-bb-500/10'
+                      : 'border-gdoc-border bg-white hover:bg-gdoc-hover'
+                  }`}
+                >
+                  <span className="min-w-0">
+                    <span className="block text-[13px] font-medium text-[#2b2622]">
+                      {new Date(v.at).toLocaleString(undefined, {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                      })}
+                    </span>
+                    <span className="block text-[11px] text-gdoc-muted">
+                      {new Date(v.at).toLocaleTimeString(undefined, {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                      {' · '}
+                      {v.words ? `${v.words.toLocaleString()} words` : 'restored snapshot'}
+                      {i === 0 ? ' · Latest' : ''}
+                    </span>
+                  </span>
+                  <span
+                    className={`h-2 w-2 flex-none rounded-full ${
+                      active ? 'bg-bb-500' : 'border border-gdoc-border'
+                    }`}
+                  />
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex-none border-t border-gdoc-border px-4 py-3">
+            {chosen && (
+              <>
+                <p
+                  className={`mb-2 overflow-hidden text-[12px] leading-relaxed text-gdoc-muted ${
+                    excerpt ? '' : 'italic'
+                  }`}
+                  style={{ display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical' }}
+                >
+                  {excerpt || 'This version has no text on its pages.'}
+                </p>
+                <button
+                  onClick={() => onRestore(chosen.content, chosen.boxes)}
+                  className="flex w-full items-center justify-center gap-2 rounded-md bg-bb-500 px-3 py-2 text-[13px] font-medium text-white hover:bg-bb-600"
+                >
+                  <RotateCcw size={14} />
+                  Restore this version
+                </button>
+              </>
+            )}
+          </div>
+        </>
       )}
-    </>
+    </aside>
   );
 }
 

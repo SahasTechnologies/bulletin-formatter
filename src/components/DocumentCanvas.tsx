@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { PaintBucket, Trash2, Unlink } from 'lucide-react';
+import PageSidebar from './PageSidebar';
 import {
   registerEditor,
   initEditorCommands,
@@ -40,8 +41,9 @@ interface TextBox {
   html: string;
   /** Next box in a linked chain, or null when this box ends the chain. */
   nextId: string | null;
-  /** Image boxes hold a picture only — no text, no editing, no flow. */
-  kind?: 'image';
+  /** Image boxes hold a picture only. A `sheet` entry is an empty-page marker:
+      it reserves a page slot so blank (e.g. trailing) pages survive saves. */
+  kind?: 'image' | 'sheet';
   /** Image source (data URL or path) when `kind === 'image'`. */
   src?: string;
 }
@@ -67,6 +69,8 @@ interface DocumentCanvasProps {
   imageSrc: string;
   /** Called on every document change with the flat HTML + serialized boxes. */
   onDocChange: (html: string, boxesJson: string) => void;
+  /** Show the end-of-document tombstone (small black square) on the last page. */
+  tombstone?: boolean;
 }
 
 let boxSeq = 0;
@@ -306,7 +310,12 @@ function buildModel(
             w: Math.max(MIN_W, Math.min(b.w ?? 200, page.width)),
             h: Math.max(MIN_H, Math.min(b.h ?? 120, page.height)),
             html: typeof b.html === 'string' ? b.html : '',
-            kind: b.kind === 'image' ? ('image' as const) : undefined,
+            kind:
+              b.kind === 'image'
+                ? ('image' as const)
+                : b.kind === 'sheet'
+                  ? ('sheet' as const)
+                  : undefined,
             src: typeof b.src === 'string' ? b.src : undefined,
             nextId:
               typeof b.nextId === 'string' ? idMap.get(b.nextId) ?? null : null,
@@ -359,7 +368,7 @@ interface BoxEntry {
   h: number;
   html: string;
   nextId: string | null;
-  kind?: 'image';
+  kind?: 'image' | 'sheet';
   src?: string;
 }
 export default function DocumentCanvas({
@@ -375,6 +384,7 @@ export default function DocumentCanvas({
   imageTick,
   imageSrc,
   onDocChange,
+  tombstone = false,
 }: DocumentCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -395,6 +405,19 @@ export default function DocumentCanvas({
   const lastTickRef = useRef(textboxTick);
   /** Page the user last clicked / worked on — where new boxes are added. */
   const activePageRef = useRef(0);
+  /** Highlighted page (sidebar + insertion target). Kept in sync with the ref. */
+  const [activePageUi, setActivePageUi] = useState(0);
+  const activatePage = useCallback((p: number) => {
+    activePageRef.current = Math.max(0, p);
+    setActivePageUi(Math.max(0, p));
+  }, []);
+
+  /** Last-snapshotted text of every box: used to seed frames that remount
+      (page moves) and to paint the sidebar thumbnails without touching the
+      live contentEditable DOM. */
+  const liveHtml = useRef(new Map<string, string>());
+  /** Bumped on every snapshot so thumbnails re-read `liveHtml`. */
+  const [, setThumbRev] = useState(0);
 
   /** Boxes whose chain still has hidden text — they render red chrome. */
   const [overflowIds, setOverflowIds] = useState<Set<string>>(() => new Set());
@@ -422,6 +445,11 @@ export default function DocumentCanvas({
 
   /** Flat HTML of the whole document + per-box geometry/content snapshot. */
   const snapshot = useCallback(() => {
+    for (const b of boxesRef.current) {
+      if (b.kind) continue; // image/sheet boxes have no live text
+      const el = boxEls.current.get(b.id);
+      liveHtml.current.set(b.id, el ? el.innerHTML : b.html);
+    }
     const entries: BoxEntry[] = boxesRef.current.map((b) => {
       const el = boxEls.current.get(b.id);
       if (b.kind === 'image') {
@@ -449,6 +477,7 @@ export default function DocumentCanvas({
         nextId: b.nextId,
       };
     });
+    setThumbRev((r) => r + 1);
     onDocChange(
       entries.map((e) => e.html).join(''),
       JSON.stringify(entries),
@@ -529,7 +558,7 @@ export default function DocumentCanvas({
     // against the box's *state* height — the DOM still shows the previous
     // frame during the same-tick resize → reflow sequence.
     for (const b of list) {
-      if (b.nextId || incoming.has(b.id) || b.kind === 'image') continue;
+      if (b.nextId || incoming.has(b.id) || b.kind === 'image' || b.kind === 'sheet') continue;
       const el = boxEls.current.get(b.id);
       if (el && el.scrollHeight > b.h + 1) overflow.add(b.id);
     }
@@ -559,7 +588,7 @@ export default function DocumentCanvas({
     setSelId(null);
     setEditId(null);
     editIdRef.current = null;
-    activePageRef.current = 0;
+    activatePage(0);
     setOverflowIds(new Set());
     setPourSourceId(null);
     setPourTargets(new Set());
@@ -690,9 +719,12 @@ export default function DocumentCanvas({
       if (el) {
         boxEls.current.set(id, el);
         if (!el.dataset.seeded) {
-          el.innerHTML = html;
+          // Prefer the most recent snapshot so a frame that remounts (page
+          // moved, box rebuilt) keeps the content the user typed.
+          el.innerHTML = liveHtml.current.get(id) ?? html;
           el.dataset.seeded = '1';
-        }      } else {
+        }
+      } else {
         boxEls.current.delete(id);
       }
     },
@@ -727,7 +759,7 @@ export default function DocumentCanvas({
   /* Clicking the empty paper clears the selection (ends editing), cancels an
      armed pour, and makes that page the target for Insert > Text box. */
   const paperMouseDown = (pageIndex: number) => {
-    activePageRef.current = pageIndex;
+    activatePage(pageIndex);
     setSelId(null);
     setEditId(null);
     // A pour stays armed across blank-paper clicks: its targets are empty
@@ -891,7 +923,7 @@ export default function DocumentCanvas({
       const list = boxesRef.current;
       const targets = new Set<string>();
       for (const b of list) {
-        if (b.id === id || b.nextId || b.kind === 'image') continue;
+        if (b.id === id || b.nextId || (b.kind === 'image' || b.kind === 'sheet')) continue;
         if (list.some((o) => o.nextId === b.id)) continue;
         const el = boxEls.current.get(b.id);
         if (el && hasRealContent(el.innerHTML)) continue;
@@ -935,7 +967,7 @@ export default function DocumentCanvas({
 
   const selectBox = useCallback((id: string) => {
     const b = boxesRef.current.find((x) => x.id === id);
-    if (b) activePageRef.current = b.pageIndex;
+    if (b) activatePage(b.pageIndex);
     setPourSourceId(null);
     setPourTargets(new Set());
     setSelId(id);
@@ -944,7 +976,7 @@ export default function DocumentCanvas({
   /** Enter edit mode for a box (double click / click on the selection). */
   const startEdit = useCallback((id: string) => {
     const b = boxesRef.current.find((x) => x.id === id);
-    if (b) activePageRef.current = b.pageIndex;
+    if (b) activatePage(b.pageIndex);
     setSelId(id);
     setEditId(id);
   }, []);
@@ -972,8 +1004,183 @@ export default function DocumentCanvas({
     [readOnly],
   );
 
+  /* ------------------------ sidebar page management ------------------------ */
+
+  /** An empty-page marker reserves a page slot so blank pages survive saves. */
+  const makeSheet = useCallback(
+    (pageIndex: number): TextBox => ({
+      id: newBoxId(),
+      pageIndex,
+      x: 0,
+      y: 0,
+      w: MIN_W,
+      h: MIN_H,
+      html: '',
+      nextId: null,
+      kind: 'sheet',
+    }),
+    [],
+  );
+
+  const scrollToPage = useCallback((p: number) => {
+    const root = containerRef.current;
+    const sheet = root?.querySelector<HTMLElement>(`[data-sheet="${p}"]`);
+    if (root && sheet) sheet.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, []);
+
+  const selectPage = useCallback(
+    (p: number) => {
+      const clamped = Math.max(0, Math.min(p, pageCount - 1));
+      setSelId(null);
+      setEditId(null);
+      activatePage(clamped);
+      scrollToPage(clamped);
+    },
+    [pageCount, activatePage, scrollToPage],
+  );
+
+  /** Append a blank page after the last page. */
+  const addPage = useCallback(() => {
+    const nextIndex = boxesRef.current.reduce(
+      (mx, b) => Math.max(mx, b.pageIndex + 1),
+      1,
+    );
+    const next = [...boxesRef.current];
+    // An empty trailing page needs a marker to keep existing.
+    if (!next.some((b) => b.pageIndex === nextIndex)) {
+      next.push(makeSheet(nextIndex));
+    }
+    applyBoxes(next);
+    setSelId(null);
+    setEditId(null);
+    activatePage(nextIndex);
+    scrollToPage(nextIndex);
+    reflowAll();
+    snapshot();
+  }, [applyBoxes, makeSheet, activatePage, scrollToPage, reflowAll, snapshot]);
+
+  /** Duplicate page `p` — every frame, its live content — right after it. */
+  const duplicatePage = useCallback(
+    (p: number) => {
+      const list = boxesRef.current;
+      const src = list.filter((b) => b.pageIndex === p);
+      if (!src.length) return;
+      const copies: TextBox[] = src.map((b) => {
+        const html = b.kind ? '' : boxEls.current.get(b.id)?.innerHTML ?? b.html;
+        return {
+          id: newBoxId(),
+          pageIndex: p + 1,
+          x: b.x,
+          y: b.y,
+          w: b.w,
+          h: b.h,
+          html,
+          nextId: null,
+          kind: b.kind,
+          src: b.src,
+        };
+      });
+      // Chains whose boxes all sit on this page stay linked among the copies.
+      const idOf = new Map(src.map((b, i) => [b.id, copies[i].id]));
+      copies.forEach((c, i) => {
+        const orig = src[i].nextId;
+        if (orig && idOf.has(orig)) c.nextId = idOf.get(orig)!;
+      });
+      const before: TextBox[] = [];
+      const after: TextBox[] = [];
+      for (const b of list) {
+        if (b.pageIndex <= p) before.push(b);
+        else after.push({ ...b, pageIndex: b.pageIndex + 1 });
+      }
+      applyBoxes([...before, ...copies, ...after]);
+      setSelId(null);
+      setEditId(null);
+      activatePage(p + 1);
+      scrollToPage(p + 1);
+      reflowAll();
+      snapshot();
+    },
+    [applyBoxes, activatePage, scrollToPage, reflowAll, snapshot],
+  );
+
+  /** Delete page `p` and everything on it; later pages shift down. */
+  const deletePage = useCallback(
+    (p: number) => {
+      const list = boxesRef.current;
+      const pageCountNow = list.reduce((mx, b) => Math.max(mx, b.pageIndex + 1), 1);
+      if (pageCountNow <= 1 || p < 0 || p >= pageCountNow) return;
+      const doomed = new Set(
+        list.filter((b) => b.pageIndex === p).map((b) => b.id),
+      );
+      if (!doomed.size) return;
+      const hasContent = list.some(
+        (b) =>
+          b.pageIndex === p &&
+          (b.kind === 'image' ||
+            (!b.kind && hasRealContent(liveHtml.current.get(b.id) ?? b.html))),
+      );
+      if (hasContent && !window.confirm(`Delete page ${p + 1}? Everything on it will be removed.`)) {
+        return;
+      }
+      const next: TextBox[] = [];
+      for (const b of list) {
+        if (b.pageIndex === p) continue;
+        if (b.pageIndex > p) next.push({ ...b, pageIndex: b.pageIndex - 1 });
+        else next.push(b);
+      }
+      for (const b of next) {
+        if (b.nextId && doomed.has(b.nextId)) b.nextId = null;
+      }
+      applyBoxes(next);
+      setOverflowIds((prev) => new Set([...prev].filter((id) => !doomed.has(id))));
+      setPourTargets((prev) => new Set([...prev].filter((id) => !doomed.has(id))));
+      setSelId((s) => (s && doomed.has(s) ? null : s));
+      setEditId((e) => (e && doomed.has(e) ? null : e));
+      if (editIdRef.current && doomed.has(editIdRef.current)) {
+        editIdRef.current = null;
+        registerEditor(null);
+      }
+      const newCount = next.reduce((mx, b) => Math.max(mx, b.pageIndex + 1), 1);
+      activatePage(Math.min(activePageRef.current, newCount - 1));
+      reflowAll();
+      snapshot();
+    },
+    [applyBoxes, activatePage, reflowAll, snapshot],
+  );
+
+  /** Live text of a box (for thumbnails): the mirror, else the seed. */
+  const contentOf = useCallback((b: TextBox) => {
+    if (b.kind) return '';
+    return liveHtml.current.get(b.id) ?? b.html;
+  }, []);
+
+  /** Whether the document has any real content (vs. blank/empty pages). */
+  const hasAnyContent = boxesState.some((b) => b.kind !== 'sheet');
+
   return (
-    <div ref={containerRef} className="relative flex-1 overflow-auto bg-[#f1f0ee]">
+    <div className="doc-wrap flex min-h-0 w-full">
+      <PageSidebar
+        pageCount={pageCount}
+        pageW={page.width}
+        pageH={page.height}
+        activePage={Math.min(activePageUi, pageCount - 1)}
+        readOnly={readOnly}
+        onSelectPage={selectPage}
+        onAddPage={addPage}
+        onDeletePage={deletePage}
+        onDuplicatePage={duplicatePage}
+        renderPage={(i) => (
+          <PageThumb
+            boxes={boxesState}
+            pageIndex={i}
+            pageW={page.width}
+            pageH={page.height}
+            contentOf={contentOf}
+            showTombstone={tombstone && i === pageCount - 1}
+          />
+        )}
+      />
+      <div ref={containerRef} className="doc-main relative min-w-0 flex-1 overflow-auto bg-[#f1f0ee]">
       {/* Horizontal ruler (unchanged chrome; margins only shade the zones). */}
       {showRuler && (
         <div className="no-print sticky top-0 z-20 border-b border-gdoc-border bg-white">
@@ -1032,11 +1239,22 @@ export default function DocumentCanvas({
         </div>
       )}
 
-      <div className="mx-auto max-w-[1100px] px-12">
-        <div className="flex flex-col items-center gap-8 py-8">
+      <div className="doc-inner mx-auto max-w-[1100px] px-12">
+        {/* --print-page-w/h keep each sheet exactly one printed page (see the
+            @media print rules in index.css). */}
+        <div
+          className="doc-stack flex flex-col items-center gap-8 py-8"
+          style={
+            {
+              '--print-page-w': `${((page.width / 96) * 25.4).toFixed(2)}mm`,
+              '--print-page-h': `${((page.height / 96) * 25.4).toFixed(2)}mm`,
+            } as React.CSSProperties
+          }
+        >
           {Array.from({ length: pageCount }, (_, pageIndex) => (
             <div
               key={pageIndex}
+              data-sheet={pageIndex}
               className="doc-paper relative"
               style={{
                 width: `${page.width}px`,
@@ -1049,10 +1267,10 @@ export default function DocumentCanvas({
                 className={`page-box-layer relative h-full w-full ${pourSourceId ? 'is-pouring' : ''}`}
                 onMouseDown={() => paperMouseDown(pageIndex)}
               >
-                {pageIndex === 0 && boxesState.length === 0 && hint}
+                {pageIndex === 0 && !hasAnyContent && hint}
 
                 {boxesState
-                  .filter((b) => b.pageIndex === pageIndex)
+                  .filter((b) => b.pageIndex === pageIndex && b.kind !== 'sheet')
                   .map((box) =>
                     box.kind === 'image' ? (
                       <ImageBoxView
@@ -1096,6 +1314,18 @@ export default function DocumentCanvas({
                     )
                   )}
               </div>
+
+              {tombstone && pageIndex === pageCount - 1 && (
+                <svg
+                  className="page-tombstone"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  aria-hidden="true"
+                >
+                  <rect x="0.5" y="0.5" width="11" height="11" rx="3.5" fill="#1f1f1f" />
+                </svg>
+              )}
             </div>
           ))}
         </div>
@@ -1163,7 +1393,7 @@ export default function DocumentCanvas({
           })}
         </div>
       )}
-
+      </div>
     </div>
   );
 
@@ -1197,6 +1427,77 @@ export default function DocumentCanvas({
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
   }
+}
+
+/* ---------------------------------------------------------------------- */
+/* Static page preview for the sidebar thumbnail.                         */
+/* ---------------------------------------------------------------------- */
+
+function PageThumb({
+  boxes,
+  pageIndex,
+  pageW,
+  pageH,
+  contentOf,
+  showTombstone,
+}: {
+  boxes: TextBox[];
+  pageIndex: number;
+  pageW: number;
+  pageH: number;
+  contentOf: (b: TextBox) => string;
+  showTombstone: boolean;
+}) {
+  return (
+    <div className="relative bg-white" style={{ width: pageW, height: pageH }}>
+      {boxes
+        .filter((b) => b.pageIndex === pageIndex && b.kind !== 'sheet')
+        .map((b) =>
+          b.kind === 'image' ? (
+            <img
+              key={b.id}
+              src={b.src}
+              alt=""
+              draggable={false}
+              className="pointer-events-none select-none"
+              style={{
+                position: 'absolute',
+                left: b.x,
+                top: b.y,
+                width: b.w,
+                height: b.h,
+                objectFit: 'fill',
+              }}
+            />
+          ) : (
+            <div
+              key={b.id}
+              className="page-box-content pointer-events-none"
+              style={{
+                position: 'absolute',
+                left: b.x,
+                top: b.y,
+                width: b.w,
+                height: b.h,
+              }}
+              dangerouslySetInnerHTML={{ __html: contentOf(b) }}
+            />
+          ),
+        )}
+      {showTombstone && (
+        <svg
+          className="pointer-events-none"
+          style={{ position: 'absolute', right: 28, bottom: 28 }}
+          width="12"
+          height="12"
+          viewBox="0 0 12 12"
+          aria-hidden="true"
+        >
+          <rect x="0.5" y="0.5" width="11" height="11" rx="3.5" fill="#1f1f1f" />
+        </svg>
+      )}
+    </div>
+  );
 }
 
 /* ---------------------------------------------------------------------- */

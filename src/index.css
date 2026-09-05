@@ -271,6 +271,17 @@ body {
   background: #f4f1ec;
 }
 
+/* End-of-document tombstone: a small black rounded square tucked into the
+   bottom-right corner of the last page, clear of the margins. */
+.page-tombstone {
+  position: absolute;
+  right: 28px;
+  bottom: 28px;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 /* Empty-page guidance shown until the first text box is added. */
 .page-empty-hint {
   position: absolute;
@@ -303,10 +314,85 @@ body {
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Hide the print chrome when printing; print only the page */
+/* ------------------------------------------------------------------
+   Printing — each page sheet prints on its own piece of paper,
+   full-bleed and exactly as it looks on screen.
+
+   App injects `@page { size: …mm …mm }` sized to the current paper +
+   orientation, and DocumentCanvas sets --print-page-w/h on the page
+   stack to the same millimetres, so a .doc-paper never overflows its
+   printed sheet and never leaves a blank second page behind. The zoom
+   transform is dropped, the flex page stack becomes a block flow so
+   `break-after: page` fragments reliably, and all editing chrome is
+   hidden. ------------------------------------------------------------------ */
 @media print {
-  @page { margin: 0.75in; }
-  body { background: #fff; overflow: visible; }
-  .no-print { display: none !important; }
-  .doc-paper { box-shadow: none; }
+  html,
+  body,
+  #root {
+    height: auto !important;
+    overflow: visible !important;
+  }
+  body {
+    background: #fff !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+
+  /* Editor chrome resets: the whole app column scrolls as normal block flow. */
+  .doc-wrap {
+    display: block !important;
+    height: auto !important;
+  }
+  .doc-main {
+    overflow: visible !important;
+    background: #fff !important;
+  }
+  .doc-inner {
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  .doc-stack {
+    display: block !important;
+    gap: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* One sheet per page: exact paper size, no zoom, no shadow, no stray gap. */
+  .doc-paper {
+    width: var(--print-page-w, 100%) !important;
+    height: var(--print-page-h, auto) !important;
+    transform: none !important;
+    box-shadow: none !important;
+    margin: 0 auto !important;
+    break-after: page;
+  }
+  .doc-paper:last-child {
+    break-after: auto;
+  }
+
+  /* Honour fills and highlight colours on paper. */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Editing chrome must never print: selection outlines, resize handles,
+     floating tools, pour highlights and empty-page hints. */
+  .page-box {
+    outline: none !important;
+  }
+  .page-box-handle,
+  .page-box-tools,
+  .page-box-link-handle,
+  .page-box-outline,
+  .page-empty-hint {
+    display: none !important;
+  }
+  .page-box.is-pour-target {
+    outline: none !important;
+    animation: none !important;
+  }
 }

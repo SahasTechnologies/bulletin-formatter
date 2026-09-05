@@ -20,6 +20,8 @@ export interface StoredDocument {
    * documents whose whole page is one flat HTML blob (migrated on open).
    */
   boxes?: string;
+  /** Show the end-of-document tombstone (small black square, last page). */
+  tombstone?: boolean;
 }
 
 const KEY = 'bulletin.recentDocs';
@@ -91,6 +93,8 @@ export interface DocVersion {
   at: number;
   words: number;
   content: string;
+  /** Frame layout at snapshot time, so a restore brings back the geometry. */
+  boxes?: string;
 }
 
 const VERSIONS_KEY = 'bulletin.docVersions';
@@ -125,13 +129,18 @@ export function getVersions(id: string): DocVersion[] {
  * Called after each save: snapshots the new content when the word count has
  * drifted at least VERSION_MIN_DELTA words from the newest snapshot.
  */
-export function recordVersion(id: string, content: string, words: number): void {
+export function recordVersion(
+  id: string,
+  content: string,
+  words: number,
+  boxes?: string,
+): void {
   if (!id) return;
   const all = loadVersions();
   const list = all[id] ?? [];
   const last = list[list.length - 1];
   if (last && Math.abs(words - last.words) < VERSION_MIN_DELTA) return;
-  list.push({ at: Date.now(), words, content });
+  list.push({ at: Date.now(), words, content, boxes });
   all[id] = list.slice(-VERSIONS_PER_DOC);
   saveVersions(all);
 }

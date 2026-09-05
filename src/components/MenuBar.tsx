@@ -71,6 +71,7 @@ import {
   Menu as MenuIcon,
   Trash2,
   Info as InfoIcon,
+  Square,
 } from 'lucide-react';
 
 export interface MenuSearchEntry {
@@ -93,21 +94,6 @@ const SYM_EMOJI = [
 const SYM_MATH = ['±', '×', '÷', '≠', '≈', '≤', '≥', '∞', '∑', '∏', '√', '∫', '∂', 'π', 'µ', 'Ω', '°', '′', '″', '∅'];
 const SYM_ARROWS = ['←', '→', '↑', '↓', '↔', '↕', '⇐', '⇒', '⇔', '➔', '➜', '↺', '↻', '⤴', '⤵'];
 const SYM_MISC = ['©', '®', '™', '§', '¶', '†', '‡', '•', '‰', '№', '☀', '☁', '☂', '★', '☆', '☐', '☑', '✓', '✗'];
-
-const DOC_LANGUAGES: [string, string][] = [
-  ['en-AU', 'English (Australia)'],
-  ['en-US', 'English (United States)'],
-  ['en-GB', 'English (United Kingdom)'],
-  ['fr', 'Français'],
-  ['de', 'Deutsch'],
-  ['es', 'Español'],
-  ['it', 'Italiano'],
-  ['pt', 'Português'],
-  ['nl', 'Nederlands'],
-  ['ja', '日本語'],
-  ['zh', '中文（简体）'],
-  ['ko', '한국어'],
-];
 
 const MENUS: Record<string, MenuItem[]> = {
   File: [
@@ -134,12 +120,6 @@ const MENUS: Record<string, MenuItem[]> = {
     { id: 'file.versions', label: 'Version history', icon: History },
     { id: 'file.details', label: 'Details', icon: InfoIcon },
     'sep',
-    { id: 'file.language', label: 'Language', icon: Languages, sub: DOC_LANGUAGES.map(([code, label]) => ({
-      id: `file.lang.${code}`,
-      label,
-      icon: code === 'en-AU' ? Languages : undefined,
-      check: true,
-    })) },
     { id: 'file.pagesetup', label: 'Page setup', icon: Pencil, sub: [
       { id: 'file.page.A4', label: 'Paper: A4 (210 × 297 mm)', icon: LayoutTemplate, check: true },
       { id: 'file.page.Letter', label: 'Paper: Letter (8.5 × 11 in)', icon: LayoutTemplate, check: true },
@@ -271,6 +251,7 @@ const MENUS: Record<string, MenuItem[]> = {
     'sep',
     { id: 'tools.preferences', label: 'Preferences', icon: Pencil, sub: [
       { id: 'tools.prefs.autocheck', label: 'Automatic spellcheck', icon: SpellCheck, check: true },
+      { id: 'tools.prefs.tombstone', label: 'End-of-document marker (tombstone)', icon: Square, check: true },
     ] },
     { id: 'tools.accessibility', label: 'Accessibility', icon: Info, sub: [
       { id: 'tools.access.screenreader', label: 'Screen reader support (large zoom)', icon: Maximize },
