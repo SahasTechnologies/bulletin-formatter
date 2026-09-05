@@ -84,15 +84,52 @@ export function startSelectionTracking(): () => void {
   return () => document.removeEventListener('selectionchange', onSelChange);
 }
 
+/**
+ * Park the caret inside the editor (start of contents) when there is no live
+ * selection — e.g. a menu-driven command before the user has ever clicked into
+ * the page. `exec()` and `applyInlineStyle()` both use this so font/size
+ * choices with a bare caret still have somewhere to act.
+ */
+function ensureSelection(): void {
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0 && isInsideEditor(sel.getRangeAt(0).commonAncestorContainer)) {
+    return;
+  }
+  if (!restoreSelection() && editorEl) {
+    editorEl.focus({ preventScroll: true });
+    const fresh = window.getSelection();
+    if (fresh && fresh.rangeCount === 0) {
+      const r = document.createRange();
+      r.setStart(editorEl, 0);
+      r.collapse(true);
+      fresh.addRange(r);
+    }
+    captureSelection();
+  }
+}
+
+/** The editor fires `input` events only for user typing; the direct DOM
+ *  surgery we do for inline styles bypasses beforeinput/input entirely. Fire
+ *  a synthetic `input` afterwards so debounced auto-save (and anything else
+ *  listening, e.g. the word count) notices formatting changes. */
+export function notifyInput(): void {
+  if (!editorEl) return;
+  editorEl.dispatchEvent(new InputEvent('input', { bubbles: true }));
+}
+
 /** Run a native editing command against the last known selection. */
 export function exec(command: string, value?: string): void {
-  restoreSelection();
+  ensureSelection();
   try {
     document.execCommand(command, false, value);
   } catch {
     /* ignore unsupported commands */
   }
   captureSelection();
+  // Document owners persist from the live DOM on `input`, so any command that
+  // rewrites the content (bold, link, table, undo...) must announce itself the
+  // same way a keystroke does.
+  notifyInput();
 }
 
 /** `true` when the command is active at the caret (bold, italic, align...). */
@@ -161,6 +198,21 @@ function stripProperty(root: DocumentFragment | Element, prop: string): void {
 }
 
 /**
+ * After stripping a property, spans that no longer carry any style (or any
+ * attribute at all) are dead wrappers left behind by a previous formatting
+ * pass — unwrap them so the document doesn't accumulate markup litter.
+ */
+function unwrapStylelessSpans(root: DocumentFragment | Element): void {
+  for (const el of Array.from(root.querySelectorAll('span'))) {
+    const attrs = Array.from(el.attributes);
+    const dead =
+      attrs.length === 0 ||
+      (attrs.length === 1 && attrs[0].name === 'style' && !attrs[0].value);
+    if (dead) unwrapElement(el as HTMLElement);
+  }
+}
+
+/**
  * True when `range` spans the entire contents of `el`.
  *
  * We compare boundary points rather than using `Selection.containsNode`,
@@ -198,7 +250,7 @@ function unwrapElement(el: HTMLElement): void {
  * - Across blocks    -> sets it on each touched block.
  */
 export function applyInlineStyle(prop: string, value: string): void {
-  restoreSelection();
+  ensureSelection();
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0) return;
 
@@ -208,6 +260,7 @@ export function applyInlineStyle(prop: string, value: string): void {
     const block = getCurrentBlock();
     if (block) block.style.setProperty(prop, value);
     captureSelection();
+    notifyInput();
     return;
   }
 
@@ -221,12 +274,19 @@ export function applyInlineStyle(prop: string, value: string): void {
   if (blocks.length > 1) {
     try {
       document.execCommand('styleWithCSS', false, 'true');
-      document.execCommand(prop === 'background-color' ? 'hiliteColor' : 'fontName', false, value);
+      // execCommand('fontName') expects a bare family name — a quoted,
+      // comma-separated stack silently produces mixed/wrong output. The
+      // fallback stack is unnecessary anyway: quoted families that fail to
+      // load simply fall through to the page's default fonts.
+      const family = prop === 'font-family' ? value.replace(/^["']+|['"],.*$/g, '').trim() : value;
+      document.execCommand(prop === 'background-color' ? 'hiliteColor' : prop === 'font-family' ? 'fontName' : 'foreColor', false, prop === 'font-family' ? family : value);
       captureSelection();
+      notifyInput();
       return;
     } catch {
       for (const b of blocks) b.style.setProperty(prop, value);
       captureSelection();
+      notifyInput();
       return;
     }
   }
@@ -256,6 +316,7 @@ export function applyInlineStyle(prop: string, value: string): void {
     // so re-applying replaces the old value instead of nesting another span
     // every time the user picks a different font / colour.
     stripProperty(contents, prop);
+    unwrapStylelessSpans(contents);
 
     span.appendChild(contents);
 
@@ -265,6 +326,7 @@ export function applyInlineStyle(prop: string, value: string): void {
     // there after the cleanup at the end of this function.
     for (const child of Array.from(span.children)) {
       if (child.tagName === 'SPAN' && !child.firstChild) span.removeChild(child);
+      else if (child instanceof HTMLElement && child.tagName === 'SPAN' && !child.getAttribute('style')) unwrapElement(child);
     }
 
     // If the fragment turned out to be a single span that no longer carries
@@ -342,22 +404,25 @@ export function applyInlineStyle(prop: string, value: string): void {
       // split fine on the first colon.
       if (name && !name.toLowerCase().includes('unknown')) node.style.setProperty(name, value);
     }
+    notifyInput();
   } catch {
     // Fall back to styling the whole block.
     const block = getCurrentBlock();
     if (block) block.style.setProperty(prop, value);
     captureSelection();
+    notifyInput();
   }
 }
 
 /** Line-height is not a native execCommand, so set it on the touched blocks. */
 export function setLineHeight(value: number | string): void {
-  restoreSelection();
+  ensureSelection();
   const blocks = blocksInSelection();
   const target = blocks.length ? blocks : getCurrentBlock() ? [getCurrentBlock()!] : [];
   for (const b of target) b.style.lineHeight = String(value);
   if (!target.length) applyInlineStyle('line-height', String(value));
   captureSelection();
+  notifyInput();
 }
 
 /** Paragraph style: 'p' | 'h1' ... 'h6'. */
@@ -371,7 +436,7 @@ export function clearFormatting(): void {
 
 /** Apply a toolbar property while preserving mixed formatting across blocks. */
 export function applyCommandStyle(command: string, value?: string): void {
-  restoreSelection();
+  ensureSelection();
   try {
     document.execCommand('styleWithCSS', false, 'true');
     document.execCommand(command, false, value);
@@ -379,22 +444,23 @@ export function applyCommandStyle(command: string, value?: string): void {
     /* ignore unsupported commands */
   }
   captureSelection();
+  notifyInput();
 }
 
-/** Prompt-free link insertion using execCommand (keeps the selection intact). */
+/** Prompt-free link insertion using execCommand (keeps the selection intact).
+ *  When the caret is collapsed — e.g. Ctrl+K with nothing selected — the URL
+ *  itself is inserted as linked text instead of silently doing nothing. */
 export function insertLink(url: string): void {
   if (!url) return;
   const safe = /^(https?:|mailto:)/i.test(url) ? url : `https://${url}`;
-  exec('createLink', safe);
-}
-
-export function insertImageFromFile(file: File): void {
-  const reader = new FileReader();
-  reader.onload = () => {
-    const src = String(reader.result);
-    exec('insertHTML', `<img src="${src}" alt="" style="max-width:100%;height:auto;" />`);
-  };
-  reader.readAsDataURL(file);
+  const sel = typeof window !== 'undefined' ? window.getSelection() : null;
+  if (sel && !sel.isCollapsed) {
+    exec('createLink', safe);
+    return;
+  }
+  // Collapsed caret: createLink has nothing to wrap, so insert a fresh link.
+  const attr = safe.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  exec('insertHTML', `<a href="${attr}">${attr}</a>&nbsp;`);
 }
 
 /** Computed CSS value at the caret, e.g. `currentStyle('fontFamily')`. */
@@ -433,6 +499,87 @@ export function currentStyle(prop: string): string {
  * Find `query` in the editor text and select the next match after the caret.
  * Returns the 1-based match index, or 0 when there is no match.
  */
+/**
+ * Replace every occurrence of `query` with `replacement` (case-insensitive).
+ * Works across separate text nodes by doing one big innerHTML surgery pass:
+ * cheap, and fine for bulletin-sized documents. Returns the match count.
+ */
+export function replaceAll(query: string, replacement: string): number {
+  if (!editorEl || !query) return 0;
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(escaped, 'gi');
+  const html = editorEl.innerHTML;
+  const count = html.match(re)?.length ?? 0;
+  // Escape `$` patterns in the replacement so user text like "$&" is literal.
+  const safe = replacement.replace(/\$/g, '$$$$');
+  if (count > 0) {
+    editorEl.innerHTML = html.replace(re, safe);
+    captureSelection();
+    // The innerHTML surgery above bypasses the normal input pipeline, so the
+    // canvas/autosave would never hear about the replacement (the old text
+    // stayed on disk until the next keystroke). Announce it like a keystroke.
+    notifyInput();
+  }
+  return count;
+}
+
+/** Character/word/sentence counts for the word-count dialog. */
+export function docStats(): { words: number; characters: number; sentences: number } {
+  const text = (editorEl?.innerText ?? editorEl?.textContent ?? '').replace(/\u00a0/g, ' ');
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+  const characters = text.replace(/\n/g, '').length;
+  const sentences = (text.match(/[.!?]+(?=\s|$)/g) ?? []).length;
+  return { words, characters, sentences };
+}
+
+/** Plain text of the current selection, for the dictionary lookup. */
+export function selectedText(): string {
+  return savedRange ? savedRange.toString().trim() : '';
+}
+
+/* -------- document language (`File > Language`) -------- */
+
+const DOC_LANG_KEY = 'bulletin.docLanguage';
+
+export function getDocLang(): string {
+  try {
+    return localStorage.getItem(DOC_LANG_KEY) || 'en-AU';
+  } catch {
+    return 'en-AU';
+  }
+}
+
+export function setDocLang(lang: string): void {
+  try {
+    localStorage.setItem(DOC_LANG_KEY, lang);
+  } catch {
+    /* non-fatal */
+  }
+  if (editorEl) editorEl.lang = lang;
+}
+
+/** Change the case of the selected text (Format > Text > Capitalisation). */
+export function transformSelectionCase(mode: 'lower' | 'upper' | 'title'): void {
+  const text = selectedText();
+  if (!text) return;
+  const t =
+    mode === 'lower'
+      ? text.toLowerCase()
+      : mode === 'upper'
+        ? text.toUpperCase()
+        : text.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase());
+  exec('insertText', t);
+}
+
+/** Newspaper-style column layout for the whole page (1–3 columns). */
+export function setColumnCount(count: number): void {
+  if (!editorEl) return;
+  editorEl.style.columnCount = count > 1 ? String(count) : '';
+  editorEl.style.columnGap = '40px';
+  editorEl.style.columnRule = count > 1 ? '1px solid #e5ddd5' : '';
+  captureSelection();
+}
+
 export function findAndSelect(query: string): number {
   if (!editorEl || !query) return 0;
 

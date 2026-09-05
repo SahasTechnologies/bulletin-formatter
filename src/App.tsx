@@ -1,10 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { X, ChevronUp, FileText } from 'lucide-react';
-import MenuBar from './components/MenuBar';
+import MenuBar, { menuSearchEntries } from './components/MenuBar';
 import Toolbar from './components/Toolbar';
 import DocumentCanvas from './components/DocumentCanvas';
+import HomeScreen from './components/HomeScreen';
 import { GoogleFontProvider } from './components/GoogleFontProvider';
 import * as ed from './lib/editor';
+import {
+  loadRecentDocs,
+  saveDoc,
+  deleteDoc,
+  newDocId,
+  getVersions,
+  recordVersion,
+  type StoredDocument,
+} from './lib/storage';
+import { type Template } from './data/templates';
+import {
+  downloadBulletin,
+  downloadHtml,
+  downloadText,
+  parseBulletin,
+  type BulletinDoc,
+} from './lib/format';
 
 const PAGE_SIZES = {
   Letter: { width: 816, height: 1056 },
@@ -13,22 +31,37 @@ const PAGE_SIZES = {
 
 type PageSizeName = keyof typeof PAGE_SIZES;
 
+/** Plain text of a snippet of HTML (used for word counts and exports). */
+function textOfHtml(html: string): string {
+  const d = document.createElement('div');
+  d.innerHTML = html;
+  return d.textContent ?? '';
+}
+
 const SHORTCUTS: [string, string][] = [
   ['Ctrl + N', 'New document'],
-  ['Ctrl + O', 'Open an HTML file'],
-  ['Ctrl + S', 'Download as HTML'],
+  ['Ctrl + O', 'Open a Bulletin file'],
+  ['Ctrl + S', 'Download (.bulletin)'],
   ['Ctrl + P', 'Print'],
-  ['Ctrl + F', 'Find in document'],
+  ['Ctrl + K', 'Insert link'],
+  ['Ctrl + F / Ctrl + H', 'Find / find and replace'],
   ['Ctrl + Z / Ctrl + Y', 'Undo / redo'],
   ['Ctrl + B', 'Bold'],
   ['Ctrl + I', 'Italic'],
   ['Ctrl + U', 'Underline'],
+  ['Ctrl + Shift + V', 'Paste without formatting'],
   ['Ctrl + Shift + L / E / R / J', 'Align left / centre / right / justify'],
   ['Ctrl + Shift + C', 'Word count'],
+  ['Ctrl + Shift + Y', 'Dictionary (lookup selection)'],
+  ['Alt + /', 'Search the menus'],
   ['Ctrl + /', 'This shortcut list'],
 ];
 
+type DialogKind = null | 'about' | 'shortcuts' | 'wordcount' | 'search' | 'versions' | 'details' | 'translate';
+
 export default function App() {
+  const [screen, setScreen] = useState<'home' | 'editor'>('home');
+
   const [title, setTitle] = useState('Untitled bulletin');
   const [starred, setStarred] = useState(false);
 
@@ -39,46 +72,214 @@ export default function App() {
   const [spellCheck, setSpellCheck] = useState(true);
   const [searchOpen, setSearchOpen] = useState(false);
   const [showRuler, setShowRuler] = useState(true);
-  const [toolbarHidden, setToolbarHidden] = useState(false);
+  const [showToolbar, setShowToolbar] = useState(true);
   const [pageName, setPageName] = useState<PageSizeName>('A4');
+  const [landscape, setLandscape] = useState(false);
+  const [viewMode, setViewMode] = useState<'editing' | 'viewing'>('editing');
+  const [docLang, setDocLang] = useState(ed.getDocLang());
 
   const [findQuery, setFindQuery] = useState('');
   const [findStatus, setFindStatus] = useState('');
+  const [replaceWith, setReplaceWith] = useState('');
   const [wordCount, setWordCount] = useState(0);
-  const [dialog, setDialog] = useState<null | 'about' | 'shortcuts' | 'wordcount'>(null);
+  const [docStatsState, setDocStatsState] = useState({ characters: 0, sentences: 0 });
+  const [dialog, setDialog] = useState<DialogKind>(null);
+  const [linkRequest, setLinkRequest] = useState(0);
+  const [menuTick, setMenuTick] = useState(0); // bumps to re-run the menu search
+
+  /** Version of the document content passed to the canvas (bump = reload). */
+  const [canvasRev, setCanvasRev] = useState(0);
+  /** Bumped by Insert > Text box to ask the canvas for a new text box. */
+  const [textboxTick, setTextboxTick] = useState(0);
+  const [imageTick, setImageTick] = useState(0);
+  const [imageSrc, setImageSrc] = useState('');
+  // Live document content, fed by the canvas on every change. The canvas DOM is
+  // the source of truth; these refs let persistence/export/stats read it
+  // without re-rendering the whole app on each keystroke.
+  const docHtmlRef = useRef('');
+  const boxesRef = useRef<string | null>(null);
+
+  // The document currently open in the editor (id + title drive persistence).
+  const [activeDoc, setActiveDoc] = useState<StoredDocument | null>(null);
+  const activeDocRef = useRef<StoredDocument | null>(null);
+  const [recentDocs, setRecentDocs] = useState<StoredDocument[]>([]);
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const titleRef = useRef<HTMLInputElement>(null);
   const findRef = useRef<HTMLInputElement>(null);
 
-  const recalc = useCallback(() => {
-    const el = ed.getEditor();
-    if (!el) return;
-    const text = (el.textContent ?? '').trim();
-    setWordCount(text ? text.split(/\s+/).length : 0);
+  useEffect(() => {
+    setRecentDocs(loadRecentDocs());
   }, []);
 
-  useEffect(() => {
-    recalc();
-  }, [recalc]);
+  const recalc = useCallback(() => {
+    const text = textOfHtml(docHtmlRef.current).replace(/\u00a0/g, ' ');
+    setWordCount(text.trim() ? text.trim().split(/\s+/).length : 0);
+    setDocStatsState({
+      characters: text.replace(/\n/g, '').length,
+      sentences: (text.match(/[.!?]+(?=\s|$)/g) ?? []).length,
+    });
+  }, []);
 
-  /** Wrap the document body in a standalone HTML file and download it. */
-  const download = useCallback(
-    (filename: string) => {
-      const el = ed.getEditor();
-      if (!el) return;
-      const html = `<!doctype html>
-<html><head><meta charset="utf-8"><title>${title}</title>
-<style>body{font-family:'Red Hat Text',system-ui;max-width:816px;margin:40px auto;line-height:1.5}</style>
-</head><body>${el.innerHTML}</body></html>`;
-      const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename.endsWith('.html') ? filename : `${filename}.html`;
-      a.click();
-      URL.revokeObjectURL(url);
+  /** Read the live editor HTML and write it to saved docs. */
+  const persistNow = useCallback(() => {
+    if (!activeDocRef.current) return;
+    const content = docHtmlRef.current ?? '';
+    const doc: StoredDocument = {
+      ...activeDocRef.current,
+      content,
+      updatedAt: Date.now(),
+    };
+    if (boxesRef.current) doc.boxes = boxesRef.current;
+    activeDocRef.current = doc;
+    saveDoc(doc);
+    // Automatic version snapshot (throttled by word-count drift in storage).
+    const text = textOfHtml(content);
+    recordVersion(doc.id, doc.content, text.trim() ? text.trim().split(/\s+/).length : 0);
+    setRecentDocs(loadRecentDocs());
+  }, []);
+
+  /**
+   * The canvas calls this on every change (typing, formatting, dragging,
+   * adding/deleting a text box) with the flat HTML and the serialized boxes.
+   */
+  const handleDocChange = useCallback(
+    (html: string, boxesJson: string) => {
+      docHtmlRef.current = html;
+      boxesRef.current = boxesJson;
+      recalc();
+      if (persistTimer.current) clearTimeout(persistTimer.current);
+      persistTimer.current = setTimeout(persistNow, 600);
     },
-    [title],
+    [recalc, persistNow],
   );
+
+  const handleTitleChange = useCallback((t: string) => {
+    setTitle(t);
+    if (activeDocRef.current) activeDocRef.current = { ...activeDocRef.current, title: t };
+  }, []);
+
+  /** Open a template as a brand-new document. */
+  const openTemplate = useCallback((tpl: Template) => {
+    const now = Date.now();
+    const doc: StoredDocument = {
+      id: newDocId(),
+      title: tpl.name,
+      content: tpl.content,
+      updatedAt: now,
+      createdAt: now,
+      page: 'A4',
+      template: tpl.id,
+    };
+    activeDocRef.current = doc;
+    setActiveDoc(doc);
+    setTitle(doc.title);
+    docHtmlRef.current = tpl.content;
+    boxesRef.current = null;
+    setRecentDocs(saveDoc(doc));
+    setScreen('editor');
+  }, []);
+
+  /** Reopen a previously-saved document. */
+  const openRecent = useCallback((doc: StoredDocument) => {
+    const refreshed: StoredDocument = {
+      ...doc,
+      updatedAt: Date.now(),
+      createdAt: doc.createdAt ?? Date.now(),
+      page: doc.page ?? 'A4',
+    };
+    activeDocRef.current = refreshed;
+    setActiveDoc(refreshed);
+    setTitle(doc.title);
+    setPageName(doc.page === 'Letter' ? 'Letter' : 'A4');
+    docHtmlRef.current = doc.content ?? '';
+    boxesRef.current = doc.boxes ?? null;
+    setRecentDocs(saveDoc(refreshed));
+    setScreen('editor');
+  }, []);
+
+  const deleteRecent = useCallback((id: string) => {
+    setRecentDocs(deleteDoc(id));
+  }, []);
+
+  /**
+   * Swap the current document's content (import, version restore…). The bump
+   * tells the canvas to rebuild its text boxes from the new HTML.
+   */
+  const replaceDocContent = useCallback(
+    (content: string, boxesJson: string | undefined) => {
+      const base = activeDocRef.current;
+      if (!base) return;
+      docHtmlRef.current = content;
+      boxesRef.current = boxesJson ?? null;
+      const doc: StoredDocument = { ...base, content, updatedAt: Date.now() };
+      if (boxesJson) doc.boxes = boxesJson;
+      activeDocRef.current = doc;
+      setActiveDoc(doc);
+      setCanvasRev((r) => r + 1);
+    },
+    [],
+  );
+
+  /** Save and return to the home screen. */
+  const goHome = useCallback(() => {
+    persistNow();
+    setRecentDocs(loadRecentDocs());
+    setShowToolbar(true);
+    setSearchOpen(false);
+    setDialog(null);
+    setScreen('home');
+  }, [persistNow]);
+
+  /** Export the document in the proprietary `.bulletin` format. */
+  const exportBulletin = useCallback(
+    (nameOverride?: string) => {
+      const name = (nameOverride ?? title) || 'Untitled bulletin';
+      const doc: BulletinDoc = {
+        format: 'bulletin',
+        version: 1,
+        title: name,
+        content: docHtmlRef.current || '',
+        page: pageName,
+        createdAt: activeDocRef.current?.createdAt ?? Date.now(),
+        updatedAt: Date.now(),
+        template: activeDocRef.current?.template,
+        boxes: boxesRef.current ?? undefined,
+      };
+      downloadBulletin(doc);
+    },
+    [title, pageName],
+  );
+
+  /** Import a `.bulletin` file and open it in the editor. */
+  const importFile = useCallback((file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const parsed = parseBulletin(String(reader.result));
+      if (!parsed) {
+        window.alert("That doesn't look like a Bulletin file.");
+        return;
+      }
+      const doc: StoredDocument = {
+        id: newDocId(),
+        title: parsed.title,
+        content: parsed.content,
+        updatedAt: Date.now(),
+        createdAt: parsed.createdAt,
+        page: parsed.page,
+        template: parsed.template,
+      };
+      activeDocRef.current = doc;
+      setActiveDoc(doc);
+      setTitle(doc.title);
+      setPageName(doc.page === 'Letter' ? 'Letter' : 'A4');
+      docHtmlRef.current = parsed.content ?? '';
+      boxesRef.current = parsed.boxes ?? null;
+      setRecentDocs(saveDoc(doc));
+      setScreen('editor');
+    };
+    reader.readAsText(file);
+  }, []);
 
   const pickImage = useCallback((onPick: (f: File) => void) => {
     const input = document.createElement('input');
@@ -91,6 +292,24 @@ export default function App() {
     input.click();
   }, []);
 
+  /** Insert a picture as its own image box on the page — a picture is an
+      object, never content inside a text frame. */
+  const insertImageBox = useCallback(() => {
+    pickImage((f) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setImageSrc(String(reader.result));
+        setImageTick((t) => t + 1);
+      };
+      reader.readAsDataURL(f);
+    });
+  }, [pickImage]);
+
+  const openFind = useCallback(() => {
+    setSearchOpen(true);
+    setTimeout(() => findRef.current?.focus(), 0);
+  }, []);
+
   const runFind = useCallback((q: string) => {
     if (!q) {
       setFindStatus('');
@@ -100,30 +319,55 @@ export default function App() {
     setFindStatus(n ? 'Match found' : 'No matches');
   }, []);
 
+  /** Replace the current match, or all matches when `all` is set. */
+  const runReplace = useCallback(
+    (all: boolean) => {
+      if (!findQuery) return;
+      if (all) {
+        const n = ed.replaceAll(findQuery, replaceWith);
+        setFindStatus(n ? `Replaced ${n} occurrence${n === 1 ? '' : 's'}` : 'No matches');
+        recalc();
+        persistNow();
+      } else {
+        const el = ed.getEditor();
+        if (el && ed.selectedText().toLowerCase() === findQuery.toLowerCase()) {
+          ed.exec('insertText', replaceWith);
+          recalc();
+          persistNow();
+        }
+        runFind(findQuery);
+      }
+    },
+    [findQuery, replaceWith, runFind, recalc, persistNow],
+  );
+
   /* ---------------- menu actions ---------------- */
 
   const run = useCallback(
     (id: string) => {
-      const el = ed.getEditor();
       switch (id) {
         case 'file.new':
-          if (el && window.confirm('Start a new document? Unsaved changes will be lost.')) {
-            el.innerHTML = '<p><br></p>';
-            el.focus();
-            recalc();
-          }
+          goHome();
           break;
         case 'file.open': {
           const input = document.createElement('input');
           input.type = 'file';
-          input.accept = '.html,.htm,.txt,text/html,text/plain';
+          input.accept = '.bulletin,.json,application/json';
           input.onchange = () => {
             const f = input.files?.[0];
-            if (!f || !el) return;
+            if (!f) return;
             const reader = new FileReader();
             reader.onload = () => {
-              el.innerHTML = String(reader.result);
+              const parsed = parseBulletin(String(reader.result));
+              if (!parsed) {
+                window.alert("That doesn't look like a Bulletin file.");
+                return;
+              }
+              setTitle(parsed.title);
+              setPageName(parsed.page === 'Letter' ? 'Letter' : 'A4');
+              replaceDocContent(parsed.content, parsed.boxes);
               recalc();
+              persistNow();
             };
             reader.readAsText(f);
           };
@@ -131,20 +375,69 @@ export default function App() {
           break;
         }
         case 'file.copy':
-          download(`${title} - copy.html`);
+          exportBulletin(`${title || 'Untitled bulletin'} (copy)`);
           break;
-        case 'file.download':
-          download(`${title}.html`);
+        case 'file.share.copylink':
+          navigator.clipboard
+            ?.writeText(`${location.origin}${location.pathname}#doc=${activeDocRef.current?.id ?? ''}`)
+            .then(() => setFindStatus('Link copied'))
+            .catch(() => window.alert('Could not access the clipboard.'));
+          setTimeout(() => setFindStatus(''), 2000);
           break;
-        case 'file.pagesetup':
-          setPageName((p) => (p === 'Letter' ? 'A4' : 'Letter'));
+        case 'file.share.mailto':
+          window.open(
+            `mailto:?subject=${encodeURIComponent(title || 'Untitled bulletin')}&body=${encodeURIComponent(
+              'Opening a bulletin requires the .bulletin file — use File > Download to attach it.',
+            )}`,
+          );
           break;
-        case 'file.print':
-          window.print();
+        case 'file.download.bulletin':
+          exportBulletin();
+          break;
+        case 'file.download.html':
+          if (docHtmlRef.current) downloadHtml(title || 'untitled', docHtmlRef.current);
+          break;
+        case 'file.download.txt':
+          if (docHtmlRef.current) downloadText(title || 'untitled', docHtmlRef.current);
+          break;
+        case 'file.trash': {
+          const d = activeDocRef.current;
+          if (d && window.confirm(`Move “${d.title}” to trash? This deletes it from this device.`)) {
+            setRecentDocs(deleteDoc(d.id));
+            activeDocRef.current = null;
+            setActiveDoc(null);
+            goHome();
+          }
+          break;
+        }
+        case 'file.versions':
+          setDialog('versions');
+          break;
+        case 'file.details':
+          setDialog('details');
           break;
         case 'file.rename':
           titleRef.current?.focus();
           titleRef.current?.select();
+          break;
+
+        case 'file.page.A4':
+          setPageName('A4');
+          break;
+        case 'file.page.Letter':
+          setPageName('Letter');
+          break;
+        case 'file.orientation.portrait':
+          setLandscape(false);
+          break;
+        case 'file.orientation.landscape':
+          setLandscape(true);
+          break;
+        case 'file.print':
+          window.print();
+          break;
+        case 'file.home':
+          goHome();
           break;
 
         case 'edit.undo': ed.exec('undo'); break;
@@ -157,42 +450,43 @@ export default function App() {
             .then((t) => ed.exec('insertText', t))
             .catch(() => ed.exec('paste'));
           break;
-        case 'edit.find':
-          setSearchOpen(true);
-          setTimeout(() => findRef.current?.focus(), 0);
+        case 'edit.pastetext':
+          navigator.clipboard
+            ?.readText()
+            .then((t) => ed.exec('insertText', t))
+            .catch(() => window.alert('Clipboard access was blocked by the browser.'));
           break;
         case 'edit.selectall': ed.exec('selectAll'); break;
+        case 'edit.delete': ed.exec('delete'); break;
+        case 'edit.find':
+          openFind();
+          break;
 
+        case 'view.mode.editing': setViewMode('editing'); break;
+        case 'view.mode.viewing': setViewMode('viewing'); break;
         case 'view.zoomin': setZoom((z) => Math.min(200, z + 10)); break;
         case 'view.zoomout': setZoom((z) => Math.max(50, z - 10)); break;
         case 'view.zoomreset': setZoom(100); break;
         case 'view.ruler': setShowRuler((r) => !r); break;
+        case 'view.toolbar': setShowToolbar((t) => !t); break;
         case 'view.fullscreen':
           if (document.fullscreenElement) document.exitFullscreen();
           else document.documentElement.requestFullscreen?.();
           break;
 
-        case 'insert.image': pickImage((f) => ed.insertImageFromFile(f)); break;
-        case 'insert.table':
-          ed.exec(
-            'insertHTML',
-            '<table style="border-collapse:collapse;width:100%"><tbody>' +
-              Array.from({ length: 3 })
-                .map(
-                  () =>
-                    '<tr>' +
-                    Array.from({ length: 3 })
-                      .map(() => '<td style="border:1px solid #d6cfc4;padding:8px">&nbsp;</td>')
-                      .join('') +
-                    '</tr>',
-                )
-                .join('') +
-              '</tbody></table><p><br></p>',
-          );
+        case 'insert.textbox': setTextboxTick((t) => t + 1); break;
+        case 'insert.image':
+          insertImageBox();
+          break;
+        case 'insert.link':
+          setLinkRequest((n) => n + 1);
           break;
         case 'insert.rule': ed.exec('insertHorizontalRule'); break;
         case 'insert.pagebreak':
           ed.exec('insertHTML', '<div style="page-break-after:always"></div><p><br></p>');
+          break;
+        case 'insert.columnbreak':
+          ed.exec('insertHTML', '<div style="break-after:column"></div><p><br></p>');
           break;
         case 'insert.date':
           ed.exec(
@@ -209,43 +503,133 @@ export default function App() {
         case 'format.italic': ed.exec('italic'); break;
         case 'format.underline': ed.exec('underline'); break;
         case 'format.strike': ed.exec('strikeThrough'); break;
+        case 'format.sub': ed.exec('subscript'); break;
+        case 'format.sup': ed.exec('superscript'); break;
+        case 'format.size.inc': setSize((s) => Math.min(400, s + 1)); ed.applyInlineStyle('font-size', `${Math.min(400, size + 1)}pt`); break;
+        case 'format.size.dec': setSize((s) => Math.max(6, s - 1)); ed.applyInlineStyle('font-size', `${Math.max(6, size - 1)}pt`); break;
+        case 'format.caps.lower': ed.transformSelectionCase('lower'); break;
+        case 'format.caps.upper': ed.transformSelectionCase('upper'); break;
+        case 'format.caps.title': ed.transformSelectionCase('title'); break;
         case 'format.left': ed.exec('justifyLeft'); break;
         case 'format.center': ed.exec('justifyCenter'); break;
         case 'format.right': ed.exec('justifyRight'); break;
         case 'format.justify': ed.exec('justifyFull'); break;
+        case 'format.indentinc': ed.exec('indent'); break;
+        case 'format.indentdec': ed.exec('outdent'); break;
+        case 'format.bullet': ed.exec('insertUnorderedList'); break;
+        case 'format.number': ed.exec('insertOrderedList'); break;
+        case 'format.quote': ed.formatBlock('blockquote'); break;
         case 'format.clear': ed.clearFormatting(); break;
 
         case 'tools.wordcount': setDialog('wordcount'); break;
         case 'tools.spellcheck': setSpellCheck((s) => !s); break;
+        case 'tools.prefs.autocheck': setSpellCheck((s) => !s); break;
+        case 'tools.dictionary': setDialog('translate'); break;
+        case 'tools.translate': setDialog('translate'); break;
 
+        case 'help.search': setDialog('search'); setMenuTick((t) => t + 1); break;
         case 'help.shortcuts': setDialog('shortcuts'); break;
         case 'help.about': setDialog('about'); break;
 
-        default:
+        default: {
+          // Dynamic ids: table grid, symbols, paragraph styles, language.
+          const table = /^insert\.table\.(\d+)x(\d+)$/.exec(id);
+          if (table) {
+            const rows = Math.min(20, Number(table[1]));
+            const cols = Math.min(20, Number(table[2]));
+            ed.exec(
+              'insertHTML',
+              '<table style="border-collapse:collapse;width:100%"><tbody>' +
+                Array.from({ length: rows })
+                  .map(
+                    () =>
+                      '<tr>' +
+                      Array.from({ length: cols })
+                        .map(() => '<td style="border:1px solid #d6cfc4;padding:8px">&nbsp;</td>')
+                        .join('') +
+                      '</tr>',
+                  )
+                  .join('') +
+                '</tbody></table><p><br></p>',
+            );
+            break;
+          }
+          if (id.startsWith('insert.char.')) {
+            ed.exec('insertText', id.slice('insert.char.'.length));
+            break;
+          }
+          if (id.startsWith('file.lang.')) {
+            const lang = id.slice('file.lang.'.length);
+            ed.setDocLang(lang);
+            setDocLang(lang);
+            break;
+          }
+          const styleMatch = /^style\.(.+)$/.exec(id);
+          if (styleMatch) {
+            const map: Record<string, { tag: string; label: string }> = {
+              normal: { tag: 'p', label: 'Normal text' },
+              title: { tag: 'h1', label: 'Title' },
+              subtitle: { tag: 'h2', label: 'Subtitle' },
+              h1: { tag: 'h1', label: 'Heading 1' },
+              h2: { tag: 'h2', label: 'Heading 2' },
+              h3: { tag: 'h3', label: 'Heading 3' },
+              h4: { tag: 'h4', label: 'Heading 4' },
+              h5: { tag: 'h5', label: 'Heading 5' },
+              h6: { tag: 'h6', label: 'Heading 6' },
+              quote: { tag: 'blockquote', label: 'Quote' },
+            };
+            const s = map[styleMatch[1]];
+            if (s) {
+              ed.formatBlock(s.tag);
+              setStyle(s.label);
+            }
+            break;
+          }
+          const spacing = /^spacing\.([\d.]+)$/.exec(id);
+          if (spacing) {
+            ed.setLineHeight(Number(spacing[1]));
+            break;
+          }
+          const columns = /^columns\.(\d)$/.exec(id);
+          if (columns) {
+            ed.setColumnCount(Number(columns[1]));
+            break;
+          }
           break;
+        }
       }
     },
-    [download, pickImage, recalc, title],
+    [exportBulletin, insertImageBox, pickImage, recalc, persistNow, replaceDocContent, title, goHome, openFind, size],
   );
 
   /* ---------------- keyboard shortcuts ---------------- */
 
   useEffect(() => {
+    if (screen !== 'editor') return;
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
-      if (!mod) return;
       const k = e.key.toLowerCase();
+
+      if (e.altKey && (k === '/' || e.code === 'Slash')) {
+        e.preventDefault();
+        setDialog('search');
+        setMenuTick((t) => t + 1);
+        return;
+      }
+      if (!mod) return;
 
       if (k === 's') {
         e.preventDefault();
-        download(`${title}.html`);
+        exportBulletin();
       } else if (k === 'p') {
         e.preventDefault();
         window.print();
-      } else if (k === 'f') {
+      } else if (k === 'f' || (k === 'h' && !e.shiftKey)) {
         e.preventDefault();
-        setSearchOpen(true);
-        setTimeout(() => findRef.current?.focus(), 0);
+        openFind();
+      } else if (k === 'k') {
+        e.preventDefault();
+        setLinkRequest((n) => n + 1);
       } else if (k === '/') {
         e.preventDefault();
         setDialog('shortcuts');
@@ -258,149 +642,512 @@ export default function App() {
       } else if (k === 'c' && e.shiftKey) {
         e.preventDefault();
         setDialog('wordcount');
+      } else if (k === 'y' && e.shiftKey) {
+        e.preventDefault();
+        setDialog('translate');
+      } else if (k === 'l' && e.shiftKey) {
+        // Advertised in the Format menu and shortcut list.
+        e.preventDefault();
+        ed.exec('justifyLeft');
+      } else if (k === 'e' && e.shiftKey) {
+        e.preventDefault();
+        ed.exec('justifyCenter');
+      } else if (k === 'r' && e.shiftKey) {
+        e.preventDefault();
+        ed.exec('justifyRight');
+      } else if (k === 'j' && e.shiftKey) {
+        e.preventDefault();
+        ed.exec('justifyFull');
+      } else if (k === 'v' && e.shiftKey) {
+        e.preventDefault();
+        navigator.clipboard
+          ?.readText()
+          .then((t) => ed.exec('insertText', t))
+          .catch(() => window.alert('Clipboard access was blocked by the browser.'));
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [download, run, title]);
+  }, [exportBulletin, run, openFind, screen]);
 
-  const page = PAGE_SIZES[pageName];
+  const page = useMemo(() => {
+    const base = PAGE_SIZES[pageName];
+    return landscape ? { width: base.height, height: base.width } : base;
+  }, [pageName, landscape]);
+
+  const menuChecked = useMemo(
+    () => ({
+      'file.page.A4': pageName === 'A4',
+      'file.page.Letter': pageName === 'Letter',
+      'file.orientation.portrait': !landscape,
+      'file.orientation.landscape': landscape,
+      [`file.lang.${docLang}`]: true,
+      'view.mode.editing': viewMode === 'editing',
+      'view.mode.viewing': viewMode === 'viewing',
+      'view.ruler': showRuler,
+      'view.toolbar': showToolbar,
+      'tools.spellcheck': spellCheck,
+      'tools.prefs.autocheck': spellCheck,
+    }),
+    [pageName, landscape, docLang, viewMode, showRuler, showToolbar, spellCheck],
+  );
+
+  const stats = docStatsState;
+
+  // Recompute the status-bar word count whenever a different document opens.
+  useEffect(() => {
+    recalc();
+  }, [activeDoc, recalc]);
 
   return (
     <GoogleFontProvider>
-      <div className="flex h-full w-full flex-col bg-gdoc-bg font-ui text-[#2b2622]">
-        <MenuBar
-          title={title}
-          starred={starred}
-          onTitleChange={setTitle}
-          onToggleStar={() => setStarred((s) => !s)}
-          onRun={run}
-          wordCount={wordCount}
-          titleRef={titleRef}
+      {screen === 'home' ? (
+        <HomeScreen
+          recentDocs={recentDocs}
+          onOpenTemplate={openTemplate}
+          onOpenRecent={openRecent}
+          onDeleteRecent={deleteRecent}
+          onImportFile={importFile}
         />
+      ) : (
+        <div className="flex h-full w-full flex-col bg-gdoc-bg font-ui text-[#2b2622]">
+          <MenuBar
+            title={title}
+            starred={starred}
+            onTitleChange={handleTitleChange}
+            onToggleStar={() => setStarred((s) => !s)}
+            onRun={run}
+            onHome={goHome}
+            titleRef={titleRef}
+            checked={menuChecked}
+          />
 
-        {toolbarHidden ? (
-          <button
-            onClick={() => setToolbarHidden(false)}
-            className="no-print flex h-8 flex-none items-center justify-center gap-1 border-b border-gdoc-border bg-white text-[12px] text-gdoc-muted hover:bg-gdoc-hover"
-          >
-            <ChevronUp size={14} className="rotate-180" /> Show toolbar
-          </button>
-        ) : (
-          <Toolbar
-            font={font}
-            size={size}
-            style={style}
+          {showToolbar ? (
+            <Toolbar
+              font={font}
+              size={size}
+              style={style}
+              zoom={zoom}
+              spellCheck={spellCheck}
+              searchOpen={searchOpen}
+              setFont={setFont}
+              setSize={setSize}
+              setStyle={setStyle}
+              setZoom={setZoom}
+              setSpellCheck={setSpellCheck}
+              setSearchOpen={setSearchOpen}
+              onToggleToolbar={() => setShowToolbar(false)}
+              onInsertImage={insertImageBox}
+              requestLink={linkRequest}
+            />
+          ) : (
+            <button
+              onClick={() => setShowToolbar(true)}
+              className="no-print flex h-8 flex-none items-center justify-center gap-1 border-b border-gdoc-border bg-white text-[12px] text-gdoc-muted hover:bg-gdoc-hover"
+            >
+              <ChevronUp size={14} className="rotate-180" /> Show toolbar
+            </button>
+          )}
+
+          {searchOpen && (
+            <div className="no-print flex flex-none flex-wrap items-center gap-2 border-b border-gdoc-border bg-white px-3 py-1.5">
+              <input
+                ref={findRef}
+                autoFocus
+                value={findQuery}
+                onChange={(e) => setFindQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') runFind(findQuery);
+                  if (e.key === 'Escape') setSearchOpen(false);
+                }}
+                placeholder="Find in document…"
+                className="w-56 rounded border border-gdoc-border px-2 py-1 text-[13px] outline-none focus:border-bb-400"
+              />
+              <input
+                value={replaceWith}
+                onChange={(e) => setReplaceWith(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') runReplace(false);
+                  if (e.key === 'Escape') setSearchOpen(false);
+                }}
+                placeholder="Replace with…"
+                className="w-56 rounded border border-gdoc-border px-2 py-1 text-[13px] outline-none focus:border-bb-400"
+              />
+              <button
+                onClick={() => runFind(findQuery)}
+                className="rounded bg-bb-500 px-3 py-1 text-[12px] font-medium text-white hover:bg-bb-600"
+              >
+                Find
+              </button>
+              <button
+                onClick={() => runReplace(false)}
+                className="rounded border border-gdoc-border px-3 py-1 text-[12px] font-medium text-[#2b2622] hover:bg-gdoc-hover"
+              >
+                Replace
+              </button>
+              <button
+                onClick={() => runReplace(true)}
+                className="rounded border border-gdoc-border px-3 py-1 text-[12px] font-medium text-[#2b2622] hover:bg-gdoc-hover"
+              >
+                Replace all
+              </button>
+              <span className="text-[12px] text-gdoc-muted">{findStatus}</span>
+              <button
+                onClick={() => setSearchOpen(false)}
+                className="ml-auto rounded p-1 text-gdoc-muted hover:bg-gdoc-hover"
+                title="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
+
+          <DocumentCanvas
+            key={activeDoc?.id ?? 'new'}
             zoom={zoom}
             spellCheck={spellCheck}
-            searchOpen={searchOpen}
-            setFont={setFont}
-            setSize={setSize}
-            setStyle={setStyle}
-            setZoom={setZoom}
-            setSpellCheck={setSpellCheck}
-            setSearchOpen={setSearchOpen}
-            onToggleToolbar={() => setToolbarHidden(true)}
+            showRuler={showRuler}
+            page={page}
+            content={activeDoc?.content ?? ''}
+            boxes={activeDoc?.boxes}
+            rev={canvasRev}
+            textboxTick={textboxTick}
+            imageTick={imageTick}
+            imageSrc={imageSrc}
+            onDocChange={handleDocChange}
+            readOnly={viewMode === 'viewing'}
           />
-        )}
 
-        {searchOpen && (
-          <div className="no-print flex flex-none items-center gap-2 border-b border-gdoc-border bg-white px-3 py-1.5">
-            <input
-              ref={findRef}
-              autoFocus
-              value={findQuery}
-              onChange={(e) => setFindQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') runFind(findQuery);
-                if (e.key === 'Escape') setSearchOpen(false);
-              }}
-              placeholder="Find in document…"
-              className="w-64 rounded border border-gdoc-border px-2 py-1 text-[13px] outline-none focus:border-bb-400"
-            />
-            <button
-              onClick={() => runFind(findQuery)}
-              className="rounded bg-bb-500 px-3 py-1 text-[12px] font-medium text-white hover:bg-bb-600"
-            >
-              Find
-            </button>
-            <span className="text-[12px] text-gdoc-muted">{findStatus}</span>
-            <button
-              onClick={() => setSearchOpen(false)}
-              className="ml-auto rounded p-1 text-gdoc-muted hover:bg-gdoc-hover"
-              title="Close"
-            >
-              <X size={16} />
-            </button>
+          <div className="no-print flex flex-none items-center gap-3 border-t border-gdoc-border bg-white px-3 py-1.5 text-[11px] text-gdoc-muted">
+            <FileText size={12} />
+            <span>
+              {pageName}
+              {landscape ? ' · landscape' : ''}
+            </span>
+            <span>
+              {page.width} × {page.height} px
+            </span>
+            <span>Zoom {zoom}%</span>
+            <span className="ml-auto">
+              {wordCount.toLocaleString()} words · {style} · {font} {size}pt
+            </span>
           </div>
-        )}
 
-        <DocumentCanvas
-          zoom={zoom}
-          spellCheck={spellCheck}
-          showRuler={showRuler}
-          page={page}
-          onInput={recalc}
-        />
-
-        <div className="no-print flex flex-none items-center gap-3 border-t border-gdoc-border bg-white px-3 py-1.5 text-[11px] text-gdoc-muted">
-          <FileText size={12} />
-          <span>{pageName}</span>
-          <span>
-            {page.width} × {page.height} px
-          </span>
-          <span>Zoom {zoom}%</span>
-          <span className="ml-auto">
-            {wordCount.toLocaleString()} words · {style} · {font} {size}pt
-          </span>
+          {dialog && (
+            <Dialog onClose={() => setDialog(null)}>
+              {dialog === 'about' && (
+                <>
+                  <h2 className="mb-2 text-[16px] font-semibold">About Bulletin Formatter</h2>
+                  <p className="mb-3 text-[13px] leading-relaxed text-gdoc-muted">
+                    A page-based editor for laying out the Baulko Bulletin — a Microsoft
+                    Publisher replacement in the browser. Built with React, TypeScript,
+                    Tailwind and Lucide icons. All 1,946 Google Fonts are available from
+                    the font dropdown.
+                  </p>
+                  <p className="text-[12px] text-gdoc-muted">
+                    Brand orange <span className="font-medium text-bb-600">#fe9c53</span>,
+                    sampled from the bulletin logo.
+                  </p>
+                </>
+              )}
+              {dialog === 'shortcuts' && (
+                <>
+                  <h2 className="mb-3 text-[16px] font-semibold">Keyboard shortcuts</h2>
+                  <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-[13px]">
+                    {SHORTCUTS.map(([k, v]) => (
+                      <div key={k} className="contents">
+                        <code className="whitespace-nowrap rounded bg-gdoc-hover px-1.5 py-0.5 text-[11px] text-[#2b2622]">
+                          {k}
+                        </code>
+                        <span className="text-gdoc-muted">{v}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+              {dialog === 'wordcount' && (
+                <>
+                  <h2 className="mb-3 text-[16px] font-semibold">Word count</h2>
+                  <p className="text-[13px] text-gdoc-muted">
+                    This document contains{' '}
+                    <span className="font-semibold text-[#2b2622]">{wordCount.toLocaleString()}</span>{' '}
+                    {wordCount === 1 ? 'word' : 'words'},{' '}
+                    <span className="font-semibold text-[#2b2622]">{stats.characters.toLocaleString()}</span>{' '}
+                    characters and about{' '}
+                    <span className="font-semibold text-[#2b2622]">{stats.sentences.toLocaleString()}</span>{' '}
+                    sentences.
+                  </p>
+                </>
+              )}
+              {dialog === 'search' && <MenuSearch onRun={run} tick={menuTick} />}
+              {dialog === 'versions' && (
+                <VersionHistory
+                  docId={activeDocRef.current?.id ?? ''}
+                  onRestore={(content) => {
+                    replaceDocContent(content, undefined);
+                    recalc();
+                    persistNow();
+                    setDialog(null);
+                  }}
+                />
+              )}
+              {dialog === 'details' && (
+                <Details
+                  title={title}
+                  doc={activeDoc}
+                  pageName={pageName}
+                  landscape={landscape}
+                  docLang={docLang}
+                  wordCount={wordCount}
+                />
+              )}
+              {dialog === 'translate' && (
+                <TranslateDialog
+                  selection={ed.selectedText()}
+                  docLang={docLang}
+                  onDocLang={(l) => {
+                    ed.setDocLang(l);
+                    setDocLang(l);
+                  }}
+                />
+              )}
+            </Dialog>
+          )}
         </div>
+      )}
+    </GoogleFontProvider>
+  );
+}
 
-        {dialog && (
-          <Dialog onClose={() => setDialog(null)}>
-            {dialog === 'about' && (
-              <>
-                <h2 className="mb-2 text-[16px] font-semibold">About Bulletin Formatter</h2>
-                <p className="mb-3 text-[13px] leading-relaxed text-gdoc-muted">
-                  A page-based editor for laying out the Baulko Bulletin — a Microsoft
-                  Publisher replacement in the browser. Built with React, TypeScript,
-                  Tailwind and Lucide icons. All 1,946 Google Fonts are available from
-                  the font dropdown.
-                </p>
-                <p className="text-[12px] text-gdoc-muted">
-                  Brand orange <span className="font-medium text-bb-600">#fe9c53</span>,
-                  sampled from the bulletin logo.
-                </p>
-              </>
-            )}
-            {dialog === 'shortcuts' && (
-              <>
-                <h2 className="mb-3 text-[16px] font-semibold">Keyboard shortcuts</h2>
-                <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-[13px]">
-                  {SHORTCUTS.map(([k, v]) => (
-                    <div key={k} className="contents">
-                      <code className="whitespace-nowrap rounded bg-gdoc-hover px-1.5 py-0.5 text-[11px] text-[#2b2622]">
-                        {k}
-                      </code>
-                      <span className="text-gdoc-muted">{v}</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-            {dialog === 'wordcount' && (
-              <>
-                <h2 className="mb-3 text-[16px] font-semibold">Word count</h2>
-                <p className="text-[13px] text-gdoc-muted">
-                  This document contains{' '}
-                  <span className="font-semibold text-[#2b2622]">{wordCount.toLocaleString()}</span>{' '}
-                  {wordCount === 1 ? 'word' : 'words'}.
-                </p>
-              </>
-            )}
-          </Dialog>
+/* ---------- Help > Search the menus (Alt+/) ---------- */
+
+function MenuSearch({ onRun, tick }: { onRun: (id: string) => void; tick: number }) {
+  const [q, setQ] = useState('');
+  const [sel, setSel] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, [tick]);
+
+  const entries = useMemo(() => menuSearchEntries(), []);
+  const query = q.trim().toLowerCase();
+  const matches = query
+    ? entries.filter(
+        (e) =>
+          e.label.toLowerCase().includes(query) ||
+          e.path.toLowerCase().includes(query) ||
+          e.menu.toLowerCase().includes(query),
+      )
+    : entries.slice(0, 12);
+
+  return (
+    <>
+      <h2 className="mb-3 text-[16px] font-semibold">Search the menus</h2>
+      <input
+        ref={inputRef}
+        value={q}
+        onChange={(e) => {
+          setQ(e.target.value);
+          setSel(0);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setSel((s) => Math.min(matches.length - 1, s + 1));
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setSel((s) => Math.max(0, s - 1));
+          } else if (e.key === 'Enter' && matches[sel]) {
+            onRun(matches[sel].id);
+          }
+        }}
+        placeholder="Type a command… (e.g. “word count”)"
+        className="mb-2 w-full rounded-md border border-gdoc-border px-3 py-2 text-[14px] outline-none focus:border-bb-400"
+      />
+      <div className="max-h-64 overflow-y-auto">
+        {matches.slice(0, 30).map((m, i) => (
+          <button
+            key={m.id + m.path}
+            onClick={() => onRun(m.id)}
+            onMouseEnter={() => setSel(i)}
+            className={`flex w-full items-center justify-between gap-3 rounded px-3 py-1.5 text-left text-[13px] ${
+              i === sel ? 'bg-gdoc-hover' : ''
+            }`}
+          >
+            <span className="truncate">{m.label}</span>
+            <span className="flex-none text-[11px] text-gdoc-muted">{m.path}</span>
+          </button>
+        ))}
+        {matches.length === 0 && (
+          <div className="px-3 py-4 text-center text-[13px] text-gdoc-muted">No matching commands</div>
         )}
       </div>
-    </GoogleFontProvider>
+    </>
+  );
+}
+
+/* ---------- File > Version history ---------- */
+
+function VersionHistory({
+  docId,
+  onRestore,
+}: {
+  docId: string;
+  onRestore: (content: string) => void;
+}) {
+  const versions = useMemo(() => (docId ? getVersions(docId) : []), [docId]);
+
+  return (
+    <>
+      <h2 className="mb-3 text-[16px] font-semibold">Version history</h2>
+      {versions.length === 0 ? (
+        <p className="text-[13px] text-gdoc-muted">
+          No saved versions yet. Snapshots are taken automatically as this document grows or
+          shrinks by about 15 words.
+        </p>
+      ) : (
+        <div className="max-h-64 space-y-1 overflow-y-auto">
+          {[...versions].reverse().map((v) => (
+            <div
+              key={v.at}
+              className="flex items-center justify-between gap-3 rounded border border-gdoc-border px-3 py-2 text-[13px]"
+            >
+              <div>
+                <div className="font-medium text-[#2b2622]">
+                  {new Date(v.at).toLocaleString(undefined, {
+                    day: 'numeric',
+                    month: 'short',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </div>
+                <div className="text-[11px] text-gdoc-muted">
+                  {v.words ? `${v.words.toLocaleString()} words` : 'Restored snapshot'}
+                </div>
+              </div>
+              <button
+                onClick={() => onRestore(v.content)}
+                className="rounded border border-gdoc-border px-2.5 py-1 text-[12px] font-medium text-[#2b2622] hover:bg-gdoc-hover"
+              >
+                Restore
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ---------- File > Details ---------- */
+
+function Details({
+  title,
+  doc,
+  pageName,
+  landscape,
+  docLang,
+  wordCount,
+}: {
+  title: string;
+  doc: StoredDocument | null;
+  pageName: string;
+  landscape: boolean;
+  docLang: string;
+  wordCount: number;
+}) {
+  const rows: [string, string][] = [
+    ['Name', title || 'Untitled bulletin'],
+    ['Size', `${(new Blob([doc?.content ?? '']).size / 1024).toFixed(1)} KB`],
+    ['Words', wordCount.toLocaleString()],
+    ['Page', `${pageName}${landscape ? ' (landscape)' : ''}`],
+    ['Language', docLang],
+    ['Created', doc?.createdAt ? new Date(doc.createdAt).toLocaleString() : '—'],
+    ['Modified', doc ? new Date(doc.updatedAt).toLocaleString() : '—'],
+  ];
+  return (
+    <>
+      <h2 className="mb-3 text-[16px] font-semibold">Document details</h2>
+      <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-[13px]">
+        {rows.map(([k, v]) => (
+          <div key={k} className="contents">
+            <span className="text-gdoc-muted">{k}</span>
+            <span className="truncate font-medium text-[#2b2622]">{v}</span>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/* ---------- Tools > Dictionary / Translate document ---------- */
+
+function TranslateDialog({
+  selection,
+  docLang,
+  onDocLang,
+}: {
+  selection: string;
+  docLang: string;
+  onDocLang: (lang: string) => void;
+}) {
+  const [term, setTerm] = useState(selection);
+  useEffect(() => setTerm(selection), [selection]);
+
+  return (
+    <>
+      <h2 className="mb-3 text-[16px] font-semibold">Dictionary</h2>
+      <p className="mb-2 text-[12px] text-gdoc-muted">
+        Look up a word online (select it in the document first, or type below), or set the
+        document language used for spellcheck.
+      </p>
+      <input
+        value={term}
+        onChange={(e) => setTerm(e.target.value)}
+        placeholder="Word to look up…"
+        className="mb-2 w-full rounded-md border border-gdoc-border px-3 py-2 text-[14px] outline-none focus:border-bb-400"
+      />
+      <button
+        onClick={() => {
+          if (term.trim()) {
+            window.open(
+              `https://www.google.com/search?q=define+${encodeURIComponent(term.trim())}`,
+              '_blank',
+              'noopener',
+            );
+          }
+        }}
+        className="mb-3 w-full rounded bg-bb-500 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-bb-600"
+      >
+        Look up “{term.trim() || '…'}”
+      </button>
+      <label className="mb-1 block text-[12px] text-gdoc-muted">Document language</label>
+      <select
+        value={docLang}
+        onChange={(e) => onDocLang(e.target.value)}
+        className="w-full rounded-md border border-gdoc-border px-2 py-1.5 text-[13px] outline-none focus:border-bb-400"
+      >
+        {[
+          ['en-AU', 'English (Australia)'],
+          ['en-US', 'English (United States)'],
+          ['en-GB', 'English (United Kingdom)'],
+          ['fr', 'Français'],
+          ['de', 'Deutsch'],
+          ['es', 'Español'],
+          ['it', 'Italiano'],
+          ['pt', 'Português'],
+          ['nl', 'Nederlands'],
+          ['ja', '日本語'],
+          ['zh', '中文（简体）'],
+          ['ko', '한국어'],
+        ].map(([code, label]) => (
+          <option key={code} value={code}>
+            {label}
+          </option>
+        ))}
+      </select>
+    </>
   );
 }
 

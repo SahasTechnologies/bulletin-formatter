@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Search,
   Undo2,
@@ -34,6 +35,9 @@ import {
   Plus,
   Rows3,
   Percent,
+  Pilcrow,
+  CaseSensitive,
+  ALargeSmall,
 } from 'lucide-react';
 import { GOOGLE_FONTS } from '../data/googleFonts';
 import { useGoogleFont } from './GoogleFontProvider';
@@ -75,6 +79,22 @@ const LINE_SPACINGS = [
 ];
 
 const FONT_PAGE = 150; // fonts rendered per "page" of the dropdown list
+const GAP = 6; // px between controls (gap-1.5)
+
+// Order of controls in the pill. The essentials are always shown; the rest
+// slide into the horizontal ⋮ strip when the window is too narrow.
+const ALL_KEYS = [
+  'find', 'undo', 'redo', 'print', 'spell', 'zoom', 'style', 'font', 'size',
+  'bold', 'italic', 'underline', 'textColor', 'highlight', 'minus', 'plus',
+  'link', 'image', 'alignL', 'alignC', 'alignR', 'alignJ', 'bullet', 'number',
+  'indentDec', 'indentInc', 'lineSpacing',
+] as const;
+type ItemKey = (typeof ALL_KEYS)[number];
+
+const ESSENTIALS = new Set<ItemKey>([
+  'find', 'undo', 'redo', 'print', 'spell', 'zoom', 'style', 'font', 'size',
+  'bold', 'italic', 'underline', 'textColor', 'highlight',
+]);
 
 export interface ToolbarState {
   font: string;
@@ -93,25 +113,12 @@ interface ToolbarProps extends ToolbarState {
   setSpellCheck: (v: boolean) => void;
   setSearchOpen: (v: boolean) => void;
   onToggleToolbar: () => void;
+  /** Insert a picture as its own image box on the page (Insert > Image). */
+  onInsertImage?: () => void;
+  /** Increment to programmatically open the link dropdown (Ctrl+K / Insert > Link). */
+  requestLink?: number;
 }
 
-type MenuKey =
-  | null
-  | 'style'
-  | 'font'
-  | 'size'
-  | 'textColor'
-  | 'highlight'
-  | 'lineSpacing'
-  | 'more'
-  | 'link';
-
-/**
- * Snapshot the current editor range before a toolbar control handles the
- * pointer, then stop the control from taking focus. Capturing here (rather
- * than relying only on `selectionchange`) is important because React may
- * mount a dropdown input in the same frame.
- */
 function keepSelection(e: React.MouseEvent) {
   ed.captureSelection();
   e.preventDefault();
@@ -121,58 +128,65 @@ export default function Toolbar(props: ToolbarProps) {
   const {
     font, size, style, zoom, spellCheck, searchOpen,
     setFont, setSize, setStyle, setZoom, setSpellCheck, setSearchOpen, onToggleToolbar,
+    onInsertImage,
+    requestLink = 0,
   } = props;
 
-  const [open, setOpen] = useState<MenuKey>(null);
+  const [open, setOpen] = useState<ItemKey | null>(null);
+  const [touch, setTouch] = useState<Set<ItemKey>>(new Set()); // captured / hidden controls
+  const [moreOpen, setMoreOpen] = useState(false);
+
   const rootRef = useRef<HTMLDivElement>(null);
+  const outerRef = useRef<HTMLDivElement>(null);
+  const pinnedRef = useRef<HTMLDivElement>(null);
+  const measurerRef = useRef<HTMLDivElement>(null);
+
   const { loadFont, isGoogleFont } = useGoogleFont();
   const [fontQuery, setFontQuery] = useState('');
   const [fontLimit, setFontLimit] = useState(FONT_PAGE);
   const [linkUrl, setLinkUrl] = useState('');
-  const fileRef = useRef<HTMLInputElement>(null);
   const fontSearchRef = useRef<HTMLInputElement>(null);
-  
-  // Track when we're manually applying styles to avoid reading stale values
+
   const isApplyingStyleRef = useRef(false);
 
-  // Re-render on selection changes so B/I/U and alignment reflect the caret.
+  // Programmatic link insertion from the menu bar / Ctrl+K.
+  const lastLinkReq = useRef(0);
+  useEffect(() => {
+    if (requestLink !== lastLinkReq.current) {
+      lastLinkReq.current = requestLink;
+      // If the link control has been pushed into the ⋮ strip, expand it so
+      // the dropdown has a mounted parent to render inside.
+      setMoreOpen(true);
+      setOpen('link');
+    }
+  }, [requestLink]);
+
   const [, force] = useReducer((x: number) => x + 1, 0);
   useEffect(() => {
     const updateCurrentStyle = () => {
-      // Skip if we're in the middle of applying a style
       if (isApplyingStyleRef.current) return;
-      
-      // Skip if a dropdown is open (user is actively selecting)
       if (open !== null) return;
-      
       force();
-      
-      // Update font, size, and style based on current cursor position
       const fontFamily = ed.currentStyle('font-family');
       if (fontFamily) {
-        // Extract the first font from the font-family stack
-        // Handle both quoted and unquoted font names
         const match = fontFamily.match(/^["']?([^"',]+)["']?/);
         if (match) {
           const extractedFont = match[1].trim();
-          // Only update if it's a Google Font we know about
-          if (isGoogleFont(extractedFont)) {
-            setFont(extractedFont);
-          }
+          if (isGoogleFont(extractedFont)) setFont(extractedFont);
         }
       }
-      
       const fontSize = ed.currentStyle('font-size');
       if (fontSize) {
-        // Convert px to pt (1pt = 96/72 px = 1.333... px, so pt = px * 0.75)
-        const pxValue = parseFloat(fontSize);
-        if (!isNaN(pxValue)) {
-          const ptValue = Math.round(pxValue * 0.75);
-          setSize(ptValue);
+        const parsed = parseFloat(fontSize);
+        if (!isNaN(parsed)) {
+          // currentStyle returns the inline declaration verbatim (e.g.
+          // "14pt") or, when no inline style exists, the computed px value.
+          // Convert px→pt for display; pt (what the editor writes) is kept as-is.
+          const unit = (fontSize.match(/[a-z%]+$/i) ?? ['px'])[0].toLowerCase();
+          setSize(unit === 'pt' ? Math.round(parsed) : Math.round(parsed * 0.75));
         }
       }
     };
-    
     document.addEventListener('selectionchange', updateCurrentStyle);
     return () => document.removeEventListener('selectionchange', updateCurrentStyle);
   }, [isGoogleFont, open]);
@@ -180,10 +194,60 @@ export default function Toolbar(props: ToolbarProps) {
   // Close menus when clicking outside the toolbar.
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(null);
+      const t = e.target as Node;
+      if (rootRef.current?.contains(t)) return;
+      // Clicks inside a portaled dropdown panel belong to the toolbar too.
+      if (t instanceof Element && t.closest('[data-dropdown-panel]')) return;
+      setOpen(null);
+      setMoreOpen(false);
     };
     window.addEventListener('mousedown', handler);
     return () => window.removeEventListener('mousedown', handler);
+  }, []);
+
+  // Measure which controls fit in the pill; the rest go into the ⋮ strip.
+  useEffect(() => {
+    const measure = () => {
+      const outer = outerRef.current;
+      const pinned = pinnedRef.current;
+      const measurer = measurerRef.current;
+      if (!outer || !pinned || !measurer) return;
+      const children = Array.from(measurer.querySelectorAll<HTMLElement>('[data-item]'));
+      if (!children.length) return;
+      const widths = children.map((c) => c.offsetWidth);
+      const items = children.map((c) => c.dataset.item as ItemKey);
+      const essential = children.map((c) => c.dataset.essential === 'true');
+
+      // Available width for the inline row: subtract the outer padding (px-2
+      // → 16), the pill padding (pl-4 + pr-3 → 28), the spacer (8) and the
+      // pinned ⋮ button (offsetWidth includes its own padding).
+      const available = outer.clientWidth - 16 - 28 - 8 - pinned.offsetWidth;
+
+      let fit = 0;
+      let acc = 0;
+      for (let i = 0; i < widths.length; i++) {
+        const extra = i > 0 ? GAP : 0;
+        if (acc + widths[i] + extra <= available) {
+          acc += widths[i] + extra;
+          fit = i + 1;
+        } else {
+          break;
+        }
+      }
+      // Essentials are the leading controls in ALL_KEYS, so the loop above
+      // already keeps as many as fit. We must NOT force-keep every essential
+      // past the available width: doing so makes the pill's content spill out
+      // past its rounded edge (truncating e.g. the font name) at narrow sizes.
+      setTouch(new Set(items.slice(fit)));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (outerRef.current) ro.observe(outerRef.current);
+    window.addEventListener('resize', measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+    };
   }, []);
 
   const fontGroups = useMemo(() => {
@@ -198,48 +262,29 @@ export default function Toolbar(props: ToolbarProps) {
     };
   }, [fontQuery]);
 
-  /** Flat, order-preserving list limited to `fontLimit` for smooth scrolling. */
   const allMatches = useMemo(() => Object.values(fontGroups).flat(), [fontGroups]);
   const visibleFonts = useMemo(() => allMatches.slice(0, fontLimit), [allMatches, fontLimit]);
 
   const applyFont = (family: string) => {
     isApplyingStyleRef.current = true;
-
-    // Start the webfont download, but do NOT wait on it. The stack below names
-    // the family first, so the browser re-renders with the real font the
-    // moment it arrives; waiting on a promise just opens a window in which the
-    // selection can be lost before the style is ever applied.
     if (isGoogleFont(family)) loadFont(family);
-
-    // Apply via a CSS span with a fallback stack. `execCommand('fontName')`
-    // would emit a bare `font-family: X` with no fallback, so while the
-    // webfont is still downloading Chrome renders the default serif —
-    // the "every font looks like Times" bug.
     ed.applyInlineStyle('font-family', `"${family}", "Red Hat Text", sans-serif`);
-
     const editor = ed.getEditor();
     if (editor) editor.focus();
-
     setTimeout(() => {
       isApplyingStyleRef.current = false;
     }, 50);
-
     setFont(family);
     setOpen(null);
   };
 
   const applySize = (pt: number) => {
     isApplyingStyleRef.current = true;
-    
     ed.applyInlineStyle('font-size', `${pt}pt`);
     setSize(pt);
     setOpen(null);
-    
-    // Force editor focus to ensure changes are applied
     const editor = ed.getEditor();
     if (editor) editor.focus();
-    
-    // Allow style reading after a short delay
     setTimeout(() => {
       isApplyingStyleRef.current = false;
     }, 100);
@@ -253,375 +298,262 @@ export default function Toolbar(props: ToolbarProps) {
 
   const activeStyle = PARAGRAPH_STYLES.find((s) => s.label === style) ?? PARAGRAPH_STYLES[0];
 
-  return (
-    <div className="no-print z-30 flex justify-center bg-white px-4 py-2 font-ui">
-      <div
-        ref={rootRef}
-        className="relative flex max-w-full flex-wrap items-center gap-0 rounded-full border border-bb-100 bg-bb-50 px-2 py-1 text-bb-900 shadow-sm"
-      >
-      <ToolBtn
-        title="Find in document (Ctrl + F)"
-        active={searchOpen}
-        onClick={() => setSearchOpen(!searchOpen)}
-      >
-        <Search size={18} />
-      </ToolBtn>
-      <ToolBtn title="Undo (Ctrl + Z)" onClick={() => ed.exec('undo')}>
-        <Undo2 size={18} />
-      </ToolBtn>
-      <ToolBtn title="Redo (Ctrl + Y)" onClick={() => ed.exec('redo')}>
-        <Redo2 size={18} />
-      </ToolBtn>
-      <ToolBtn title="Print (Ctrl + P)" onClick={() => window.print()}>
-        <Printer size={18} />
-      </ToolBtn>
-      <ToolBtn
-        title="Toggle spellcheck"
-        active={spellCheck}
-        onClick={() => setSpellCheck(!spellCheck)}
-      >
-        <SpellCheck size={18} />
-      </ToolBtn>
+  /* -------- shared dropdown panel bodies -------- */
+  const renderStylePanel = () => (
+    <>
+      {PARAGRAPH_STYLES.map((s) => (
+        <button key={s.label} onMouseDown={keepSelection} onClick={() => applyStyle(s)}
+          className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left hover:bg-gdoc-hover">
+          <span style={s.preview} className="truncate">{s.label}</span>
+          {style === s.label && <Check size={14} className="flex-none text-bb-600" />}
+        </button>
+      ))}
+    </>
+  );
 
-      <Sep />
-
-      <ZoomControl zoom={zoom} setZoom={setZoom} />
-
-      <Sep />
-
-      {/* Paragraph style — each row is previewed in its own typography */}
-      <Dropdown
-        open={open === 'style'}
-        onOpenChange={(v) => setOpen(v ? 'style' : null)}
-        label={<span className="text-[13px]">{activeStyle.label}</span>}
-        width={210}
-      >
-        {PARAGRAPH_STYLES.map((s) => (
-          <button
-            key={s.label}
-            onMouseDown={keepSelection}
-            onClick={() => applyStyle(s)}
-            className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left hover:bg-gdoc-hover"
-          >
-            <span style={s.preview} className="truncate">
-              {s.label}
-            </span>
-            {style === s.label && <Check size={14} className="flex-none text-bb-600" />}
+  const renderFontPanel = () => (
+    <>
+      <div className="sticky top-0 border-b border-gdoc-border bg-white px-2 py-1.5">
+        <input
+          ref={fontSearchRef}
+          type="text"
+          value={fontQuery}
+          onChange={(e) => { setFontQuery(e.target.value); setFontLimit(FONT_PAGE); }}
+          placeholder={`Search ${GOOGLE_FONTS.length.toLocaleString()} fonts…`}
+          className="w-full rounded-md border border-gdoc-border px-2 py-1.5 text-[13px] outline-none focus:border-bb-400"
+        />
+      </div>
+      <div className="max-h-[340px] overflow-y-auto py-1"
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) setFontLimit((n) => n + FONT_PAGE);
+        }}>
+        {visibleFonts.map((f) => (
+          <button key={`${f.category}-${f.family}`} onMouseEnter={() => loadFont(f.family)}
+            onMouseDown={keepSelection} onClick={() => applyFont(f.family)}
+            className="flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left hover:bg-gdoc-hover">
+            <span style={{ fontFamily: `"${f.family}", system-ui` }} className="truncate text-[15px]">{f.family}</span>
+            {font === f.family && <Check size={14} className="flex-none text-bb-600" />}
           </button>
         ))}
-      </Dropdown>
+        {visibleFonts.length === 0 && (
+          <div className="px-3 py-4 text-center text-[12px] text-gdoc-muted">No fonts match “{fontQuery}”</div>
+        )}
+        {visibleFonts.length > 0 && visibleFonts.length < allMatches.length && (
+          <div className="px-3 py-2 text-center text-[11px] text-gdoc-muted">Scroll for more…</div>
+        )}
+      </div>
+    </>
+  );
 
-      <Sep />
+  const renderSizePanel = () => (
+    <div className="max-h-[280px] overflow-y-auto py-1">
+      {FONT_SIZES.map((s) => (
+        <button key={s} onMouseDown={keepSelection} onClick={() => applySize(s)}
+          className="flex w-full items-center justify-between px-3 py-1.5 text-left text-[13px] hover:bg-gdoc-hover">
+          <span>{s}</span>
+          {size === s && <Check size={14} className="text-bb-600" />}
+        </button>
+      ))}
+    </div>
+  );
 
-      {/* Font family — all 1,946 Google Fonts */}
-      <Dropdown
-        open={open === 'font'}
-        onOpenChange={(v) => {
-          setOpen(v ? 'font' : null);
-          // Only move focus into the search box when no text is selected —
-          // focusing it while a selection exists destroys that selection.
-          if (v && !ed.hasSelection()) {
-            requestAnimationFrame(() => fontSearchRef.current?.focus());
-          }
-        }}
-        label={<span className="max-w-[130px] truncate text-[13px]">{font}</span>}
-        width={290}
-      >
-        <div className="sticky top-0 border-b border-gdoc-border bg-white px-2 py-1.5">
-          <input
-            ref={fontSearchRef}
-            type="text"
-            value={fontQuery}
-            onChange={(e) => {
-              setFontQuery(e.target.value);
-              setFontLimit(FONT_PAGE);
-            }}
-            placeholder={`Search ${GOOGLE_FONTS.length.toLocaleString()} fonts…`}
-            className="w-full rounded-md border border-gdoc-border px-2 py-1.5 text-[13px] outline-none focus:border-bb-400"
-          />
-        </div>
-        <div
-          className="max-h-[340px] overflow-y-auto py-1"
-          onScroll={(e) => {
-            const el = e.currentTarget;
-            if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) {
-              setFontLimit((n) => n + FONT_PAGE);
-            }
-          }}
-        >
-          {visibleFonts.map((f) => (
-            <button
-              key={`${f.category}-${f.family}`}
-              onMouseEnter={() => loadFont(f.family)}
-              onMouseDown={keepSelection}
-              onClick={() => applyFont(f.family)}
-              className="flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left hover:bg-gdoc-hover"
-            >
-              <span style={{ fontFamily: `"${f.family}", system-ui` }} className="truncate text-[15px]">
-                {f.family}
-              </span>
-              {font === f.family && <Check size={14} className="flex-none text-bb-600" />}
-            </button>
-          ))}
-          {visibleFonts.length === 0 && (
-            <div className="px-3 py-4 text-center text-[12px] text-gdoc-muted">
-              No fonts match “{fontQuery}”
-            </div>
-          )}
-          {visibleFonts.length > 0 && visibleFonts.length < allMatches.length && (
-            <div className="px-3 py-2 text-center text-[11px] text-gdoc-muted">Scroll for more…</div>
-          )}
-        </div>
-      </Dropdown>
+  const renderColorPanel = () => (
+    <div className="grid grid-cols-10 gap-1 p-3">
+      {TEXT_COLORS.map((c) => (
+        <button key={c} title={c} onMouseDown={keepSelection} onClick={() => { ed.applyCommandStyle('foreColor', c); setOpen(null); }}
+          className="h-5 w-5 rounded-sm border border-gdoc-border transition-transform hover:scale-110" style={{ background: c }} />
+      ))}
+    </div>
+  );
 
-      <Sep />
+  const renderHighlightPanel = () => (
+    <div className="grid grid-cols-8 gap-1 p-3">
+      {HIGHLIGHT_COLORS.map((c) => (
+        <button key={c} title={c === 'transparent' ? 'No highlight' : c} onMouseDown={keepSelection}
+          onClick={() => { if (c === 'transparent') ed.applyInlineStyle('background-color', 'transparent'); else ed.applyCommandStyle('hiliteColor', c); setOpen(null); }}
+          className="h-5 w-5 rounded-sm border border-gdoc-border transition-transform hover:scale-110" style={{ background: c === 'transparent' ? '#fff' : c }} />
+      ))}
+    </div>
+  );
 
-      {/* Font size */}
-      <Dropdown
-        open={open === 'size'}
-        onOpenChange={(v) => setOpen(v ? 'size' : null)}
-        label={<span className="text-[13px]">{size}</span>}
-        width={92}
-      >
-        <div className="max-h-[280px] overflow-y-auto py-1">
-          {FONT_SIZES.map((s) => (
-            <button
-              key={s}
-              onMouseDown={keepSelection}
-              onClick={() => applySize(s)}
-              className="flex w-full items-center justify-between px-3 py-1.5 text-left text-[13px] hover:bg-gdoc-hover"
-            >
-              <span>{s}</span>
-              {size === s && <Check size={14} className="text-bb-600" />}
-            </button>
-          ))}
-        </div>
-      </Dropdown>
+  const renderLinkPanel = () => (
+    <div className="p-3">
+      <label className="mb-1 block text-[12px] text-gdoc-muted">Link URL</label>
+      <input value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => { if (e.key === 'Enter') { ed.insertLink(linkUrl); setLinkUrl(''); setOpen(null); } }}
+        placeholder="https://baulkobulletin.com"
+        className="w-full rounded-md border border-gdoc-border px-2 py-1.5 text-[13px] outline-none focus:border-bb-400" />
+      <div className="mt-2 flex justify-end gap-2">
+        <button onMouseDown={keepSelection} onClick={() => setOpen(null)} className="rounded px-3 py-1 text-[13px] text-gdoc-muted hover:bg-gdoc-hover">Cancel</button>
+        <button onMouseDown={keepSelection} onClick={() => { ed.insertLink(linkUrl); setLinkUrl(''); setOpen(null); }}
+          className="rounded bg-bb-500 px-3 py-1 text-[13px] font-medium text-white hover:bg-bb-600">Apply</button>
+      </div>
+    </div>
+  );
 
-      <Sep />
+  const renderLineSpacingPanel = () => (
+    <>
+      {LINE_SPACINGS.map((l) => (
+        <button key={l.value} onMouseDown={keepSelection} onClick={() => { ed.setLineHeight(l.value); setOpen(null); }}
+          className="flex w-full items-center gap-3 px-3 py-1.5 text-left text-[13px] hover:bg-gdoc-hover">
+          <Rows3 size={15} className="flex-none text-bb-600" />
+          <span className="flex-1">{l.label}</span>
+        </button>
+      ))}
+    </>
+  );
 
-      <ToolBtn title="Decrease font size" onClick={() => applySize(Math.max(6, size - 1))}>
-        <Minus size={15} />
-      </ToolBtn>
-      <ToolBtn title="Increase font size" onClick={() => applySize(Math.min(400, size + 1))}>
-        <Plus size={15} />
-      </ToolBtn>
-
-      <Sep />
-
-      <ToolBtn title="Bold (Ctrl + B)" active={ed.queryState('bold')} onClick={() => ed.exec('bold')}>
-        <Bold size={18} />
-      </ToolBtn>
-      <ToolBtn title="Italic (Ctrl + I)" active={ed.queryState('italic')} onClick={() => ed.exec('italic')}>
-        <Italic size={18} />
-      </ToolBtn>
-      <ToolBtn title="Underline (Ctrl + U)" active={ed.queryState('underline')} onClick={() => ed.exec('underline')}>
-        <Underline size={18} />
-      </ToolBtn>
-
-      <Sep />
-
-      <Dropdown
-        open={open === 'textColor'}
-        onOpenChange={(v) => setOpen(v ? 'textColor' : null)}
-        title="Text colour"
-        label={
-          <span className="flex flex-col items-center leading-none">
-            <Type size={16} />
-            <span className="mt-0.5 h-[3px] w-4 rounded-sm" style={{ background: '#000000' }} />
-          </span>
-        }
-        width={240}
-      >
-        <div className="grid grid-cols-10 gap-1 p-3">
-          {TEXT_COLORS.map((c) => (
-            <button
-              key={c}
-              title={c}
-              onMouseDown={keepSelection}
-              onClick={() => {
-                ed.applyCommandStyle('foreColor', c);
-                setOpen(null);
-              }}
-              className="h-5 w-5 rounded-sm border border-gdoc-border transition-transform hover:scale-110"
-              style={{ background: c }}
-            />
-          ))}
-        </div>
-      </Dropdown>
-
-      <Dropdown
-        open={open === 'highlight'}
-        onOpenChange={(v) => setOpen(v ? 'highlight' : null)}
-        title="Highlight colour"
-        label={
-          <span className="flex flex-col items-center leading-none">
-            <Highlighter size={16} />
-            <span className="mt-0.5 h-[3px] w-4 rounded-sm bg-bb-400" />
-          </span>
-        }
-        width={240}
-      >
-        <div className="grid grid-cols-8 gap-1 p-3">
-          {HIGHLIGHT_COLORS.map((c) => (
-            <button
-              key={c}
-              title={c === 'transparent' ? 'No highlight' : c}
-              onMouseDown={keepSelection}
-              onClick={() => {
-                if (c === 'transparent') ed.applyCommandStyle('removeFormat');
-                else ed.applyCommandStyle('hiliteColor', c);
-                setOpen(null);
-              }}
-              className="h-5 w-5 rounded-sm border border-gdoc-border transition-transform hover:scale-110"
-              style={{ background: c === 'transparent' ? '#fff' : c }}
-            />
-          ))}
-        </div>
-      </Dropdown>
-
-      <Sep />
-
-      {/* Link */}
-      <Dropdown
-        open={open === 'link'}
-        onOpenChange={(v) => setOpen(v ? 'link' : null)}
-        label={<Link2 size={18} />}
-        title="Insert link (Ctrl + K)"
-        width={280}
-      >
-        <div className="p-3">
-          <label className="mb-1 block text-[12px] text-gdoc-muted">Link URL</label>
-          <input
-            autoFocus
-            value={linkUrl}
-            onChange={(e) => setLinkUrl(e.target.value)}
-            onMouseDown={(e) => e.stopPropagation()}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                ed.insertLink(linkUrl);
-                setLinkUrl('');
-                setOpen(null);
+  /** `measuring` is used by the hidden pass to render controls closed, so the
+   *  shared font-search ref never gets stolen by a duplicate hidden panel. */
+  const trigger = (key: ItemKey, measuring = false, iconOnly = false): React.ReactNode => {
+    const o = (k: ItemKey) => (measuring ? false : open === k);
+    switch (key) {
+      case 'find':
+        return <ToolBtn title="Find in document (Ctrl + F)" active={searchOpen} onClick={() => setSearchOpen(!searchOpen)}><Search size={18} /></ToolBtn>;
+      case 'undo':
+        return <ToolBtn title="Undo (Ctrl + Z)" onClick={() => ed.exec('undo')}><Undo2 size={18} /></ToolBtn>;
+      case 'redo':
+        return <ToolBtn title="Redo (Ctrl + Y)" onClick={() => ed.exec('redo')}><Redo2 size={18} /></ToolBtn>;
+      case 'print':
+        return <ToolBtn title="Print (Ctrl + P)" onClick={() => window.print()}><Printer size={18} /></ToolBtn>;
+      case 'spell':
+        return <ToolBtn title="Toggle spellcheck" active={spellCheck} onClick={() => setSpellCheck(!spellCheck)}><SpellCheck size={18} /></ToolBtn>;
+      case 'zoom':
+        return <ZoomControl zoom={zoom} setZoom={setZoom} open={o('zoom')} onOpenChange={(v) => setOpen(v ? 'zoom' : null)} />;
+      case 'style':
+        return <Dropdown open={o('style')} softOpen onOpenChange={(v) => setOpen(v ? 'style' : null)} title="Paragraph styles" label={iconOnly ? <Pilcrow size={18} /> : <span className="text-[13px]">{activeStyle.label}</span>} width={210}>{renderStylePanel()}</Dropdown>;
+      case 'font':
+        return (
+          <Dropdown
+            open={o('font')}
+            onOpenChange={(v) => {
+              setOpen(v ? 'font' : null);
+              if (v && !ed.hasSelection()) {
+                // Double rAF: the portaled panel mounts a tick after the state
+                // flip, so wait for it before focusing the search box.
+                requestAnimationFrame(() => requestAnimationFrame(() => fontSearchRef.current?.focus()));
               }
             }}
-            placeholder="https://baulkobulletin.com"
-            className="w-full rounded-md border border-gdoc-border px-2 py-1.5 text-[13px] outline-none focus:border-bb-400"
-          />
-          <div className="mt-2 flex justify-end gap-2">
-            <button
-              onMouseDown={keepSelection}
-              onClick={() => setOpen(null)}
-              className="rounded px-3 py-1 text-[13px] text-gdoc-muted hover:bg-gdoc-hover"
-            >
-              Cancel
-            </button>
-            <button
-              onMouseDown={keepSelection}
-              onClick={() => {
-                ed.insertLink(linkUrl);
-                setLinkUrl('');
-                setOpen(null);
-              }}
-              className="rounded bg-bb-500 px-3 py-1 text-[13px] font-medium text-white hover:bg-bb-600"
-            >
-              Apply
-            </button>
+            title="Font"
+            softOpen
+            label={iconOnly ? <CaseSensitive size={18} /> : <span className="max-w-[130px] truncate text-[13px]">{font}</span>}
+            width={290}
+          >
+            {renderFontPanel()}
+          </Dropdown>
+        );
+      case 'size':
+        return <Dropdown open={o('size')} softOpen onOpenChange={(v) => setOpen(v ? 'size' : null)} title="Font size" label={iconOnly ? <ALargeSmall size={18} /> : <span className="text-[13px]">{size}</span>} width={92}>{renderSizePanel()}</Dropdown>;
+      case 'minus':
+        return <ToolBtn title="Decrease font size" onClick={() => applySize(Math.max(6, size - 1))}><Minus size={15} /></ToolBtn>;
+      case 'plus':
+        return <ToolBtn title="Increase font size" onClick={() => applySize(Math.min(400, size + 1))}><Plus size={15} /></ToolBtn>;
+      case 'bold':
+        return <ToolBtn title="Bold (Ctrl + B)" active={ed.queryState('bold')} onClick={() => ed.exec('bold')}><Bold size={18} /></ToolBtn>;
+      case 'italic':
+        return <ToolBtn title="Italic (Ctrl + I)" active={ed.queryState('italic')} onClick={() => ed.exec('italic')}><Italic size={18} /></ToolBtn>;
+      case 'underline':
+        return <ToolBtn title="Underline (Ctrl + U)" active={ed.queryState('underline')} onClick={() => ed.exec('underline')}><Underline size={18} /></ToolBtn>;
+      case 'textColor':
+        return (
+          <Dropdown open={o('textColor')} onOpenChange={(v) => setOpen(v ? 'textColor' : null)} title="Text colour" width={240}
+            label={<span className="flex flex-col items-center leading-none"><Type size={16} /><span className="mt-0.5 h-[3px] w-4 rounded-sm" style={{ background: '#000000' }} /></span>}>
+            {renderColorPanel()}
+          </Dropdown>
+        );
+      case 'highlight':
+        return (
+          <Dropdown open={o('highlight')} onOpenChange={(v) => setOpen(v ? 'highlight' : null)} title="Highlight colour" width={240}
+            label={<span className="flex flex-col items-center leading-none"><Highlighter size={16} /><span className="mt-0.5 h-[3px] w-4 rounded-sm bg-bb-400" /></span>}>
+            {renderHighlightPanel()}
+          </Dropdown>
+        );
+      case 'link':
+        return <Dropdown open={o('link')} onOpenChange={(v) => setOpen(v ? 'link' : null)} label={<Link2 size={18} />} title="Insert link (Ctrl + K)" width={280}>{renderLinkPanel()}</Dropdown>;
+      case 'image':
+        return <ToolBtn title="Insert image" onClick={() => onInsertImage?.()}><ImageIcon size={18} /></ToolBtn>;
+      case 'alignL':
+        return <ToolBtn title="Align left" active={ed.queryState('justifyLeft')} onClick={() => ed.exec('justifyLeft')}><AlignLeft size={18} /></ToolBtn>;
+      case 'alignC':
+        return <ToolBtn title="Align centre" active={ed.queryState('justifyCenter')} onClick={() => ed.exec('justifyCenter')}><AlignCenter size={18} /></ToolBtn>;
+      case 'alignR':
+        return <ToolBtn title="Align right" active={ed.queryState('justifyRight')} onClick={() => ed.exec('justifyRight')}><AlignRight size={18} /></ToolBtn>;
+      case 'alignJ':
+        return <ToolBtn title="Justify" active={ed.queryState('justifyFull')} onClick={() => ed.exec('justifyFull')}><AlignJustify size={18} /></ToolBtn>;
+      case 'bullet':
+        return <ToolBtn title="Bulleted list" onClick={() => ed.exec('insertUnorderedList')}><List size={18} /></ToolBtn>;
+      case 'number':
+        return <ToolBtn title="Numbered list" onClick={() => ed.exec('insertOrderedList')}><ListOrdered size={18} /></ToolBtn>;
+      case 'indentDec':
+        return <ToolBtn title="Decrease indent" onClick={() => ed.exec('outdent')}><IndentDecrease size={18} /></ToolBtn>;
+      case 'indentInc':
+        return <ToolBtn title="Increase indent" onClick={() => ed.exec('indent')}><IndentIncrease size={18} /></ToolBtn>;
+      case 'lineSpacing':
+        return <Dropdown open={o('lineSpacing')} onOpenChange={(v) => setOpen(v ? 'lineSpacing' : null)} label={<Rows3 size={18} />} title="Line spacing" width={170}>{renderLineSpacingPanel()}</Dropdown>;
+      default:
+        return null;
+    }
+  };
+
+  const wrapped = (key: ItemKey, node: React.ReactNode) => (
+    <div key={key} data-item={key} data-essential={ESSENTIALS.has(key) ? 'true' : undefined} className="flex-none">
+      {node}
+    </div>
+  );
+
+  const collapsedKeys = ALL_KEYS.filter((k) => touch.has(k));
+
+  return (
+    <div ref={outerRef} className="no-print z-30 flex flex-col items-center bg-white px-2 py-2 font-ui">
+      <div
+        ref={rootRef}
+        className="relative flex w-full max-w-full flex-nowrap items-center rounded-full border border-bb-100 bg-bb-50 py-1 pl-4 pr-3 text-bb-900 shadow-sm"
+      >
+        {/* Inline pill row — one icon high, never wraps. */}
+        <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 overflow-visible">
+          {ALL_KEYS.filter((k) => !touch.has(k)).map((k) => wrapped(k, trigger(k)))}
+        </div>
+
+        <div className="flex-none pl-2" />
+
+        {/* Pinned ⋮ — toggles the horizontal overflow strip. */}
+        <div ref={pinnedRef} className="relative flex flex-none items-center pl-1">
+          <ToolBtn
+            title="More tools"
+            active={moreOpen}
+            onClick={() => setMoreOpen((m) => !m)}
+          >
+            <MoreHorizontal size={18} />
+          </ToolBtn>
+        </div>
+      </div>
+
+      {/* Horizontal overflow strip — icons only, spans the full width. */}
+      {moreOpen && (
+        <div className="mt-1.5 flex w-full justify-center">
+          <div className="no-scrollbar flex h-10 w-full max-w-full flex-nowrap items-center gap-1 overflow-x-auto rounded-full border border-bb-100 bg-bb-50 px-3 text-bb-900 shadow-sm">
+            {collapsedKeys.length > 0 && collapsedKeys.map((k) => wrapped(k, trigger(k, false, true)))}
+            {collapsedKeys.length > 0 && <Sep />}
+            <ToolBtn title="Strikethrough" onClick={() => ed.exec('strikeThrough')}><Strikethrough size={18} /></ToolBtn>
+            <ToolBtn title="Subscript" onClick={() => ed.exec('subscript')}><Subscript size={18} /></ToolBtn>
+            <ToolBtn title="Superscript" onClick={() => ed.exec('superscript')}><Superscript size={18} /></ToolBtn>
+            <ToolBtn title="Clear formatting" onClick={() => ed.clearFormatting()}><Eraser size={18} /></ToolBtn>
+            <Sep />
+            <ToolBtn title="Hide the toolbar" onClick={onToggleToolbar}><ChevronUp size={18} /></ToolBtn>
           </div>
         </div>
-      </Dropdown>
+      )}
 
-      <ToolBtn title="Insert image" onClick={() => fileRef.current?.click()}>
-        <ImageIcon size={18} />
-      </ToolBtn>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) ed.insertImageFromFile(f);
-          e.target.value = '';
-        }}
-      />
-
-      <Sep />
-
-      <ToolBtn title="Align left" active={ed.queryState('justifyLeft')} onClick={() => ed.exec('justifyLeft')}>
-        <AlignLeft size={18} />
-      </ToolBtn>
-      <ToolBtn title="Align centre" active={ed.queryState('justifyCenter')} onClick={() => ed.exec('justifyCenter')}>
-        <AlignCenter size={18} />
-      </ToolBtn>
-      <ToolBtn title="Align right" active={ed.queryState('justifyRight')} onClick={() => ed.exec('justifyRight')}>
-        <AlignRight size={18} />
-      </ToolBtn>
-      <ToolBtn title="Justify" active={ed.queryState('justifyFull')} onClick={() => ed.exec('justifyFull')}>
-        <AlignJustify size={18} />
-      </ToolBtn>
-
-      <Sep />
-
-      <ToolBtn title="Bulleted list" onClick={() => ed.exec('insertUnorderedList')}>
-        <List size={18} />
-      </ToolBtn>
-      <ToolBtn title="Numbered list" onClick={() => ed.exec('insertOrderedList')}>
-        <ListOrdered size={18} />
-      </ToolBtn>
-      <ToolBtn title="Decrease indent" onClick={() => ed.exec('outdent')}>
-        <IndentDecrease size={18} />
-      </ToolBtn>
-      <ToolBtn title="Increase indent" onClick={() => ed.exec('indent')}>
-        <IndentIncrease size={18} />
-      </ToolBtn>
-
-      <Sep />
-
-      <Dropdown
-        open={open === 'lineSpacing'}
-        onOpenChange={(v) => setOpen(v ? 'lineSpacing' : null)}
-        label={<Rows3 size={18} />}
-        title="Line spacing"
-        width={170}
+      {/* Hidden measuring pass — every control rendered closed for width. */}
+      <div
+        ref={measurerRef}
+        aria-hidden
+        className="pointer-events-none absolute left-0 top-0 flex w-max flex-nowrap items-center gap-1.5 opacity-0"
       >
-        {LINE_SPACINGS.map((l) => (
-          <button
-            key={l.value}
-            onMouseDown={keepSelection}
-            onClick={() => {
-              ed.setLineHeight(l.value);
-              setOpen(null);
-            }}
-            className="flex w-full items-center gap-3 px-3 py-1.5 text-left text-[13px] hover:bg-gdoc-hover"
-          >
-            <Rows3 size={15} className="flex-none text-bb-600" />
-            <span className="flex-1">{l.label}</span>
-          </button>
-        ))}
-      </Dropdown>
-
-      <Sep />
-
-      <Dropdown
-        open={open === 'more'}
-        onOpenChange={(v) => setOpen(v ? 'more' : null)}
-        label={<MoreHorizontal size={18} />}
-        title="More formatting"
-        width={230}
-      >
-        <MoreItem icon={<Strikethrough size={15} />} label="Strikethrough" onClick={() => ed.exec('strikeThrough')} />
-        <MoreItem icon={<Subscript size={15} />} label="Subscript" onClick={() => ed.exec('subscript')} />
-        <MoreItem icon={<Superscript size={15} />} label="Superscript" onClick={() => ed.exec('superscript')} />
-        <div className="my-1 border-t border-gdoc-border" />
-        <MoreItem icon={<Eraser size={15} />} label="Clear formatting" onClick={() => ed.clearFormatting()} />
-      </Dropdown>
-
-      <div className="ml-auto flex items-center pr-1">
-        <ToolBtn title="Hide the toolbar (Ctrl + Shift + F)" onClick={onToggleToolbar}>
-          <ChevronUp size={18} />
-        </ToolBtn>
+        {ALL_KEYS.map((k) => wrapped(k, trigger(k, true)))}
       </div>
-      </div>
+
     </div>
   );
 }
@@ -648,8 +580,8 @@ function ToolBtn({
       title={title}
       onClick={onClick}
       onMouseDown={keepSelection}
-      className={`grid h-8 w-8 place-items-center rounded transition-colors ${
-        active ? 'bg-bb-400 text-bb-900' : 'text-bb-900 hover:bg-bb-200/60'
+      className={`grid h-8 w-8 flex-none place-items-center rounded-md transition-colors ${
+        active ? 'bg-bb-500 text-white' : 'text-bb-900 hover:bg-bb-200/60'
       }`}
     >
       {children}
@@ -657,97 +589,93 @@ function ToolBtn({
   );
 }
 
-function MoreItem({
-  icon,
-  label,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onMouseDown={keepSelection}
-      onClick={onClick}
-      className="flex w-full items-center gap-3 px-3 py-1.5 text-left text-[13px] hover:bg-gdoc-hover"
-    >
-      <span className="text-gdoc-muted">{icon}</span>
-      <span>{label}</span>
-    </button>
-  );
-}
-
 function ZoomControl({
   zoom,
   setZoom,
+  open,
+  onOpenChange,
 }: {
   zoom: number;
   setZoom: React.Dispatch<React.SetStateAction<number>>;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
 
+  // Close when clicking outside both the trigger and the portaled panel.
   useEffect(() => {
-    const h = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      onOpenChange(false);
     };
-    window.addEventListener('mousedown', h);
-    return () => window.removeEventListener('mousedown', h);
-  }, []);
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [open, onOpenChange]);
+
+  // Panel position, portaled so the scrollable strip can't clip it.
+  useEffect(() => {
+    if (!open) {
+      setPos(null);
+      return;
+    }
+    const update = () => {
+      const r = btnRef.current?.getBoundingClientRect();
+      if (!r) return;
+      setPos({ left: Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - 160 - 8)), top: r.bottom + 6 });
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [open]);
 
   return (
-    <div ref={ref} className="relative">
-      <div className="flex h-8 items-center rounded text-bb-900 hover:bg-bb-200/60">
-        <button
-          onMouseDown={keepSelection}
-          onClick={() => setZoom((z) => Math.max(50, z - 10))}
-          className="grid h-8 w-7 place-items-center"
-          title="Zoom out"
-        >
-          <ZoomOut size={16} />
-        </button>
-        <button
-          onMouseDown={keepSelection}
-          onClick={() => setOpen((o) => !o)}
-          className="px-1 text-[13px]"
-          title="Zoom level"
-        >
-          {zoom}%
-        </button>
-        <button
-          onMouseDown={keepSelection}
-          onClick={() => setZoom((z) => Math.min(200, z + 10))}
-          className="grid h-8 w-7 place-items-center"
-          title="Zoom in"
-        >
-          <ZoomIn size={16} />
-        </button>
+    <div ref={ref} className="relative flex-none">
+      <div className="flex h-8 items-center rounded-md text-bb-900 hover:bg-bb-200/60">
+        <button onMouseDown={keepSelection} onClick={() => setZoom((z) => Math.max(50, z - 10))} className="grid h-8 w-7 place-items-center" title="Zoom out"><ZoomOut size={16} /></button>
+        <button ref={btnRef} onMouseDown={keepSelection} onClick={() => onOpenChange(!open)} className="px-1 text-[13px]" title="Zoom level">{zoom}%</button>
+        <button onMouseDown={keepSelection} onClick={() => setZoom((z) => Math.min(200, z + 10))} className="grid h-8 w-7 place-items-center" title="Zoom in"><ZoomIn size={16} /></button>
       </div>
-      {open && (
-        <div className="dropdown absolute left-0 top-full z-30 mt-1 w-40 rounded-md border border-gdoc-border bg-white py-1 text-[#2b2622] shadow-lg">
-          {[50, 75, 90, 100, 125, 150, 200].map((p) => (
-            <button
-              key={p}
-              onMouseDown={keepSelection}
-              onClick={() => {
-                setZoom(p);
-                setOpen(false);
-              }}
-              className="flex w-full items-center gap-3 px-3 py-1.5 text-left text-[13px] hover:bg-gdoc-hover"
-            >
-              <Percent size={15} className="flex-none text-bb-600" />
-              <span className="flex-1">{p}%</span>
-              {zoom === p && <Check size={14} className="flex-none text-bb-600" />}
-            </button>
-          ))}
-        </div>
-      )}
+      {open && pos &&
+        createPortal(
+          <div
+            ref={panelRef}
+            data-dropdown-panel
+            className="dropdown fixed z-[60] w-40 rounded-md border border-gdoc-border bg-white py-1 text-[#2b2622] shadow-lg"
+            style={{ left: pos.left, top: pos.top }}
+          >
+            {[50, 75, 90, 100, 125, 150, 200].map((p) => (
+              <button key={p} onMouseDown={keepSelection} onClick={() => { setZoom(p); onOpenChange(false); }}
+                className="flex w-full items-center gap-3 px-3 py-1.5 text-left text-[13px] hover:bg-gdoc-hover">
+                <Percent size={15} className="flex-none text-bb-600" />
+                <span className="flex-1">{p}%</span>
+                {zoom === p && <Check size={14} className="flex-none text-bb-600" />}
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
 
-/** Trigger + panel. The panel always opens *directly below* the trigger. */
+/**
+ * A dropdown whose panel is portaled to <body> and pinned under the trigger.
+ *
+ * Portaling matters for two reasons:
+ *  - controls inside the horizontally-scrollable ⋮ strip would otherwise have
+ *    their panels clipped by the strip's overflow, and
+ *  - a fixed-position panel at a high z-index can never slide underneath the
+ *    pill, the menu bar, or the page canvas.
+ */
 function Dropdown({
   open,
   onOpenChange,
@@ -755,6 +683,7 @@ function Dropdown({
   children,
   width = 200,
   title,
+  softOpen,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -762,28 +691,74 @@ function Dropdown({
   children: React.ReactNode;
   width?: number;
   title?: string;
+  /** When true, the open trigger shows a soft tint instead of the solid orange
+   *  fill. Use for menu-toppers (font, paragraph style, size) that just open a
+   *  panel rather than acting as a toggled state. */
+  softOpen?: boolean;
 }) {
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+
+  // Keep the panel pinned below its trigger, clamped to the viewport.
+  useEffect(() => {
+    if (!open) {
+      setPos(null);
+      return;
+    }
+    const update = () => {
+      const r = btnRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const left = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - width - 8));
+      setPos({ left, top: r.bottom + 6 });
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [open, width]);
+
+  // Close when clicking outside both the trigger and the portaled panel.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      onOpenChange(false);
+    };
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [open, onOpenChange]);
+
   return (
-    <div className="relative">
+    <div className="relative flex-none">
       <button
+        ref={btnRef}
         title={title}
         onMouseDown={keepSelection}
         onClick={() => onOpenChange(!open)}
-        className={`flex h-8 min-w-8 items-center justify-center gap-1 rounded px-2 transition-colors hover:bg-bb-200/60 ${
-          open ? 'bg-bb-200' : ''
+        className={`flex h-8 items-center justify-center gap-1 rounded-md px-2 transition-colors hover:bg-bb-200/60 ${
+          open ? (softOpen ? 'bg-bb-200/60' : 'bg-bb-500 text-white') : ''
         }`}
       >
         {label}
-        <ChevronDown size={14} className="flex-none text-gdoc-muted" />
+        <ChevronDown size={14} className="flex-none" />
       </button>
-      {open && (
-        <div
-          className="dropdown absolute left-0 top-full z-30 mt-1 overflow-hidden rounded-md border border-gdoc-border bg-white text-[#2b2622] shadow-lg"
-          style={{ width }}
-        >
-          {children}
-        </div>
-      )}
+      {open && pos &&
+        createPortal(
+          <div
+            ref={panelRef}
+            data-dropdown-panel
+            className="dropdown fixed z-[60] overflow-hidden rounded-md border border-gdoc-border bg-white text-[#2b2622] shadow-lg"
+            style={{ left: pos.left, top: pos.top, width }}
+          >
+            {children}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
