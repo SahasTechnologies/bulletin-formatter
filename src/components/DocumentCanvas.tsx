@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { PaintBucket, Trash2, Unlink } from 'lucide-react';
+import { Columns2, Columns3, ImagePlus, PaintBucket, Trash2, Unlink } from 'lucide-react';
 import PageSidebar from './PageSidebar';
 import {
   registerEditor,
@@ -19,12 +19,34 @@ const RULER_SIZE = 28; // px thickness shared by the top and left rulers
 const PAGE_GAP = 32; // flex gap (gap-8) between page sheets
 const MIN_W = 60;
 const MIN_H = 40;
+/** 1×1 transparent GIF — the invisible backing picture of a placeholder box
+    (its dashed 'click to add' cover is drawn by CSS, see .page-box-ph). */
+const TRANSPARENT_GIF =
+  'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 /** Vertical gap between stacked element boxes in a migrated document. */
 const SPLIT_GAP = 24;
+/** Gutter (px) between columns inside a multi-column text box. */
+const COLUMN_GAP = 28;
+/** Gray of the rule drawn between columns (matches the frame borders). */
+const COLUMN_RULE_COLOR = '#d8d2ca';
 /** Pixels of movement before a click on a selected box turns into a drag. */
 const DRAG_THRESHOLD = 3;
 
 const DEFAULT_MARGINS = { left: 96, right: 96, top: 80, bottom: 80 };
+
+const MASTER_MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/** Fill the @page / @month / @year tokens in a master header/footer line. */
+function fillMaster(text: string, pageNumber: number): string {
+  const now = new Date();
+  return (text || '')
+    .replace(/@page/g, String(pageNumber))
+    .replace(/@month/g, MASTER_MONTHS[now.getMonth()] ?? '')
+    .replace(/@year/g, String(now.getFullYear()));
+}
 
 /**
  * A text box on the page. `html` is only the *seed* — after mount the box's
@@ -39,6 +61,10 @@ interface TextBox {
   w: number;
   h: number;
   html: string;
+  /** Newspaper-style column count for a text box (1 = single column).
+      Multi-column boxes fill column 1 top-to-bottom, then column 2, and
+      draw a gray rule down the gutter between columns. */
+  columns?: number;
   /** Next box in a linked chain, or null when this box ends the chain. */
   nextId: string | null;
   /** Image boxes hold a picture only. A `sheet` entry is an empty-page marker:
@@ -46,6 +72,15 @@ interface TextBox {
   kind?: 'image' | 'sheet';
   /** Image source (data URL or path) when `kind === 'image'`. */
   src?: string;
+  /** Corner rounding (px) applied to an image box's picture. */
+  radius?: number;
+  /** Soft-edge fade (px): how far the picture's edges dissolve out. */
+  fade?: number;
+  /** Placeholder hint for an empty image box (e.g. from a bulletin template):
+      while set, the frame draws a dashed 'click to add …' cover and a click
+      opens the image picker instead of selecting. Cleared when a real image
+      is dropped in. */
+  ph?: string;
 }
 
 interface DocumentCanvasProps {
@@ -71,6 +106,10 @@ interface DocumentCanvasProps {
   onDocChange: (html: string, boxesJson: string) => void;
   /** Show the end-of-document tombstone (small black square) on the last page. */
   tombstone?: boolean;
+  /** Master-page header/footer: plain text on every page, tokens @page,
+      @month and @year are resolved per page (number + today's date). */
+  masterHeader?: string;
+  masterFooter?: string;
 }
 
 let boxSeq = 0;
@@ -210,6 +249,9 @@ function splitIntoBoxes(
     x?: number;
     w: number;
     h: number;
+    radius?: number;
+    fade?: number;
+    ph?: string;
   }) => {
     out.push({
       id: newBoxId(),
@@ -221,6 +263,9 @@ function splitIntoBoxes(
       html: entry.html ?? '',
       kind: entry.kind,
       src: entry.src,
+      radius: entry.radius,
+      fade: entry.fade,
+      ph: entry.ph,
       nextId: null,
     });
     y += entry.h + SPLIT_GAP;
@@ -249,7 +294,23 @@ function splitIntoBoxes(
       }
       w = Math.max(MIN_W, Math.min(Math.round(w), contentW));
       h = Math.max(MIN_H, Math.min(Math.round(h), contentH));
-      place({ kind: 'image', src, x: margins.left + Math.round((contentW - w) / 2), w, h });
+      // Templates may carry data-radius/data-fade so sample artwork opens
+      // pre-styled (rounded corners / soft faded edges).
+      const radius = Math.max(0, Math.min(2000, parseFloat(img.getAttribute('data-radius') || '') || 0));
+      const fade = Math.max(0, Math.min(2000, parseFloat(img.getAttribute('data-fade') || '') || 0));
+      // data-ph marks an empty image frame: the box opens as a click-to-add
+      // placeholder (dashed 'add image' cover) instead of showing artwork.
+      const ph = img.getAttribute('data-ph') || undefined;
+      place({
+        kind: 'image',
+        src: ph ? TRANSPARENT_GIF : src,
+        x: margins.left + Math.round((contentW - w) / 2),
+        w,
+        h,
+        radius,
+        fade,
+        ph,
+      });
       continue;
     }
     const isHr = el.tagName === 'HR';
@@ -317,6 +378,19 @@ function buildModel(
                   ? ('sheet' as const)
                   : undefined,
             src: typeof b.src === 'string' ? b.src : undefined,
+            radius:
+              typeof b.radius === 'number'
+                ? Math.max(0, Math.min(2000, Math.round(b.radius)))
+                : undefined,
+            fade:
+              typeof b.fade === 'number'
+                ? Math.max(0, Math.min(2000, Math.round(b.fade)))
+                : undefined,
+            columns:
+              typeof b.columns === 'number' && b.columns >= 1
+                ? Math.min(4, Math.round(b.columns))
+                : undefined,
+            ph: typeof b.ph === 'string' ? b.ph : undefined,
             nextId:
               typeof b.nextId === 'string' ? idMap.get(b.nextId) ?? null : null,
           }));
@@ -370,6 +444,10 @@ interface BoxEntry {
   nextId: string | null;
   kind?: 'image' | 'sheet';
   src?: string;
+  radius?: number;
+  fade?: number;
+  ph?: string;
+  columns?: number;
 }
 export default function DocumentCanvas({
   zoom,
@@ -385,6 +463,8 @@ export default function DocumentCanvas({
   imageSrc,
   onDocChange,
   tombstone = false,
+  masterHeader = '',
+  masterFooter = '',
 }: DocumentCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -464,6 +544,9 @@ export default function DocumentCanvas({
           nextId: b.nextId,
           kind: 'image',
           src: b.src,
+          radius: typeof b.radius === 'number' ? Math.round(b.radius) : undefined,
+          fade: typeof b.fade === 'number' ? Math.round(b.fade) : undefined,
+          ph: b.ph,
         };
       }
       return {
@@ -474,6 +557,7 @@ export default function DocumentCanvas({
         w: Math.round(b.w),
         h: Math.round(b.h),
         html: el ? el.innerHTML : b.html,
+        columns: b.columns && b.columns > 1 ? b.columns : undefined,
         nextId: b.nextId,
       };
     });
@@ -533,7 +617,7 @@ export default function DocumentCanvas({
           y: b.y,
           w: b.w,
           h: b.h,
-          columns: 1,
+          columns: Math.max(1, Math.round(b.columns ?? 1)),
           nextId: b.nextId,
         })),
       );
@@ -806,9 +890,20 @@ export default function DocumentCanvas({
 
   const scale = zoom / 100 || 1;
 
+  type BoxPatch = {
+    x?: number;
+    y?: number;
+    w?: number;
+    h?: number;
+    radius?: number;
+    fade?: number;
+    src?: string;
+    ph?: string;
+    columns?: number;
+  };
   const updateBox = useCallback(
-    (id: string, geom: { x: number; y: number; w: number; h: number }) => {
-      const next = boxesRef.current.map((b) => (b.id === id ? { ...b, ...geom } : b));
+    (id: string, patch: BoxPatch) => {
+      const next = boxesRef.current.map((b) => (b.id === id ? { ...b, ...patch } : b));
       applyBoxes(next);
       // Resizing changes a chain link's capacity: redistribute right away so
       // text pulls back / pushes down live during the drag.
@@ -896,6 +991,28 @@ export default function DocumentCanvas({
       snapshot();
     },
     [applyBoxes, reflowAll, snapshot],
+  );
+
+  /** Replace the picture inside an image box: pick a file, then swap the
+      source in place (geometry, corner radius and fade are kept). The load
+      listener re-fits the frame to the new picture's aspect automatically. */
+  const replaceBoxImage = useCallback(
+    (id: string) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.onchange = () => {
+        const f = input.files?.[0];
+        if (!f) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          updateBox(id, { src: String(reader.result), ph: undefined });
+        };
+        reader.readAsDataURL(f);
+      };
+      input.click();
+    },
+    [updateBox],
   );
 
   /** Break this box's link to the next one; the next box keeps its content
@@ -1177,6 +1294,8 @@ export default function DocumentCanvas({
             pageH={page.height}
             contentOf={contentOf}
             showTombstone={tombstone && i === pageCount - 1}
+            masterHeader={masterHeader}
+            masterFooter={masterFooter}
           />
         )}
       />
@@ -1285,6 +1404,7 @@ export default function DocumentCanvas({
                         onSelect={selectBox}
                         onGeomChange={updateBox}
                         onDelete={removeBox}
+                        onReplace={replaceBoxImage}
                       />
                     ) : (
                     <TextBoxView
@@ -1325,6 +1445,17 @@ export default function DocumentCanvas({
                 >
                   <rect x="0.5" y="0.5" width="11" height="11" rx="3.5" fill="#1f1f1f" />
                 </svg>
+              )}
+
+              {masterHeader && (
+                <div className="master-band master-band-header">
+                  {fillMaster(masterHeader, pageIndex + 1)}
+                </div>
+              )}
+              {masterFooter && (
+                <div className="master-band master-band-footer">
+                  {fillMaster(masterFooter, pageIndex + 1)}
+                </div>
               )}
             </div>
           ))}
@@ -1440,6 +1571,8 @@ function PageThumb({
   pageH,
   contentOf,
   showTombstone,
+  masterHeader = '',
+  masterFooter = '',
 }: {
   boxes: TextBox[];
   pageIndex: number;
@@ -1447,28 +1580,47 @@ function PageThumb({
   pageH: number;
   contentOf: (b: TextBox) => string;
   showTombstone: boolean;
+  masterHeader: string;
+  masterFooter: string;
 }) {
   return (
     <div className="relative bg-white" style={{ width: pageW, height: pageH }}>
-      {boxes
+      {      boxes
         .filter((b) => b.pageIndex === pageIndex && b.kind !== 'sheet')
         .map((b) =>
           b.kind === 'image' ? (
-            <img
-              key={b.id}
-              src={b.src}
-              alt=""
-              draggable={false}
-              className="pointer-events-none select-none"
-              style={{
-                position: 'absolute',
-                left: b.x,
-                top: b.y,
-                width: b.w,
-                height: b.h,
-                objectFit: 'fill',
-              }}
-            />
+            (() => {
+              const minSide = Math.max(2, Math.min(b.w, b.h));
+              const fade = Math.max(0, Math.min(Math.round(b.fade ?? 0), Math.floor(minSide / 2)));
+              // Edge-only fade: two linear gradients (horizontal + vertical)
+              // intersected, so just the borders dissolve and the middle of
+              // the picture stays fully opaque — no ellipse vignette.
+              const maskPct = fade > 0 ? (fade / minSide) * 100 : 0;
+              const maskH = `linear-gradient(to right, transparent 0, #000 ${maskPct.toFixed(1)}%, #000 ${(100 - maskPct).toFixed(1)}%, transparent 100%)`;
+              const maskV = `linear-gradient(to bottom, transparent 0, #000 ${maskPct.toFixed(1)}%, #000 ${(100 - maskPct).toFixed(1)}%, transparent 100%)`;
+              const mask = fade > 0 ? `${maskH}, ${maskV}` : undefined;
+              return (
+                <img
+                  key={b.id}
+                  src={b.src}
+                  alt=""
+                  draggable={false}
+                  className="pointer-events-none select-none"
+                  style={{
+                    position: 'absolute',
+                    left: b.x,
+                    top: b.y,
+                    width: b.w,
+                    height: b.h,
+                    objectFit: 'cover',
+                    borderRadius: Math.max(0, Math.min(2000, Math.round(b.radius ?? 0))),
+                    maskImage: mask,
+                    WebkitMaskImage: mask,
+                    maskComposite: 'intersect',
+                  }}
+                />
+              );
+            })()
           ) : (
             <div
               key={b.id}
@@ -1495,6 +1647,16 @@ function PageThumb({
         >
           <rect x="0.5" y="0.5" width="11" height="11" rx="3.5" fill="#1f1f1f" />
         </svg>
+      )}
+      {masterHeader && (
+        <div className="master-band master-band-header" style={{ position: 'absolute' }}>
+          {fillMaster(masterHeader, pageIndex + 1)}
+        </div>
+      )}
+      {masterFooter && (
+        <div className="master-band master-band-footer" style={{ position: 'absolute' }}>
+          {fillMaster(masterFooter, pageIndex + 1)}
+        </div>
       )}
     </div>
   );
@@ -1527,7 +1689,10 @@ interface TextBoxViewProps {
   onSelect: (id: string) => void;
   onStartEdit: (id: string) => void;
   onInput: () => void;
-  onGeomChange: (id: string, geom: { x: number; y: number; w: number; h: number }) => void;
+  onGeomChange: (
+    id: string,
+    patch: { x?: number; y?: number; w?: number; h?: number; radius?: number; fade?: number; columns?: number },
+  ) => void;
   onArmPour: (id: string) => void;
   onAcceptPour: (id: string) => void;
   onUnlink: (id: string) => void;
@@ -1683,6 +1848,10 @@ function TextBoxView({
     { h: 'w', style: { left: 0, top: '50%' }, cursor: 'ew-resize' },
   ];
 
+  /** Newspaper-style column count (1 = single). A multi-column box fills
+      column 1 first, then column 2, with a gray rule in the gutter. */
+  const cols = Math.max(1, Math.min(3, Math.round(box.columns ?? 1)));
+
   return (
     <div
       className={`page-box ${selected ? 'is-selected' : ''} ${editing ? 'is-editing' : ''} ${
@@ -1710,6 +1879,14 @@ function TextBoxView({
         spellCheck={spellCheck}
         data-ph="Type here…"
         onInput={onInput}
+        style={{
+          columnCount: cols,
+          columnGap: cols > 1 ? COLUMN_GAP : undefined,
+          // Newspaper rule: a gray hairline down the middle of a multi-column
+          // box (accent-color of the existing borders).
+          columnRule: cols > 1 ? `1px solid ${COLUMN_RULE_COLOR}` : undefined,
+          columnFill: 'auto',
+        }}
       />
 
       {/* Red outline whenever text is clipped — even unselected — so the
@@ -1735,6 +1912,27 @@ function TextBoxView({
               e.stopPropagation();
             }}
           >
+            <button
+              title="Single column"
+              onClick={() => onGeomChange(box.id, { columns: 1 })}
+              className={cols === 1 ? 'is-active' : ''}
+            >
+              <span className="text-[10px] font-semibold leading-none">1</span>
+            </button>
+            <button
+              title="Two columns with a gray rule between them"
+              onClick={() => onGeomChange(box.id, { columns: 2 })}
+              className={cols === 2 ? 'is-active' : ''}
+            >
+              <Columns2 size={13} />
+            </button>
+            <button
+              title="Three columns with gray rules between them"
+              onClick={() => onGeomChange(box.id, { columns: 3 })}
+              className={cols === 3 ? 'is-active' : ''}
+            >
+              <Columns3 size={13} />
+            </button>
             {box.nextId && (
               <button
                 title="Break link to next box (its text stays put)"
@@ -1794,8 +1992,22 @@ interface ImageBoxViewProps {
   pageH: number;
   onRegisterImg: (id: string, el: HTMLImageElement | null) => void;
   onSelect: (id: string) => void;
-  onGeomChange: (id: string, geom: { x: number; y: number; w: number; h: number }) => void;
+  onGeomChange: (
+    id: string,
+    patch: {
+      x?: number;
+      y?: number;
+      w?: number;
+      h?: number;
+      radius?: number;
+      fade?: number;
+      src?: string;
+      ph?: string;
+      columns?: number;
+    },
+  ) => void;
   onDelete: (id: string) => void;
+  onReplace: (id: string) => void;
 }
 
 function ImageBoxView({
@@ -1809,6 +2021,7 @@ function ImageBoxView({
   onSelect,
   onGeomChange,
   onDelete,
+  onReplace,
 }: ImageBoxViewProps) {
   const dragRef = useRef<{
     mode: 'move' | Handle;
@@ -1857,7 +2070,8 @@ function ImageBoxView({
         return;
       }
       let { x, y, w, h } = d.orig;
-      const corner = d.mode.length === 2;
+      const side = d.mode.includes('e') || d.mode.includes('w');
+      const vert = d.mode.includes('n') || d.mode.includes('s');
       if (d.mode.includes('e')) w = d.orig.w + dx;
       if (d.mode.includes('s')) h = d.orig.h + dy;
       if (d.mode.includes('w')) {
@@ -1868,11 +2082,12 @@ function ImageBoxView({
         h = d.orig.h - dy;
         y = d.orig.y + dy;
       }
-      if (corner) {
-        // Lock to the original aspect ratio from the dominant axis.
-        if (Math.abs(w - d.orig.w) >= Math.abs(h - d.orig.h)) h = Math.round(w * d.aspect);
-        else w = Math.round(h / d.aspect);
-      }
+      // Pictures keep their aspect ratio: whichever dimension the drag
+      // changed, the other follows, so a frame never stretches its image.
+      if (side && !vert) h = Math.round(w * d.aspect);
+      else if (vert && !side) w = Math.round(h / d.aspect);
+      else if (Math.abs(w - d.orig.w) >= Math.abs(h - d.orig.h)) h = Math.round(w * d.aspect);
+      else w = Math.round(h / d.aspect);
       onGeomChange(box.id, clampGeom({ x, y, w, h }));
     };
 
@@ -1897,14 +2112,32 @@ function ImageBoxView({
     { h: 'w', style: { left: 0, top: '50%' }, cursor: 'ew-resize' },
   ];
 
+  const radius = Math.max(0, Math.min(2000, Math.round(box.radius ?? 0)));
+  const minSide = Math.max(2, Math.min(box.w, box.h));
+  const fade = Math.max(0, Math.min(Math.round(box.fade ?? 0), Math.floor(minSide / 2)));
+  // The picture's edges dissolve out over `fade` px: two linear gradients
+  // (horizontal + vertical) intersected, so only the borders fade and the
+  // middle stays fully opaque — corners keep their colour, no ellipse.
+  const maskPct = fade > 0 ? (fade / minSide) * 100 : 0;
+  const maskH = `linear-gradient(to right, transparent 0, #000 ${maskPct.toFixed(1)}%, #000 ${(100 - maskPct).toFixed(1)}%, transparent 100%)`;
+  const maskV = `linear-gradient(to bottom, transparent 0, #000 ${maskPct.toFixed(1)}%, #000 ${(100 - maskPct).toFixed(1)}%, transparent 100%)`;
+  const mask = fade > 0 ? `${maskH}, ${maskV}` : undefined;
+
   return (
     <div
-      className={`page-box page-box-image ${selected ? 'is-selected' : ''}`}
+      className={`page-box page-box-image ${selected ? 'is-selected' : ''} ${box.ph ? 'is-ph' : ''}`}
       style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
       onMouseDown={(e) => {
         if (readOnly) return;
         e.preventDefault();
         e.stopPropagation();
+        // A placeholder frame is click-to-fill: pick a picture straight away
+        // (and select it so its tools are visible if the picker is cancelled).
+        if (box.ph) {
+          if (!selected) onSelect(box.id);
+          onReplace(box.id);
+          return;
+        }
         // First click selects the frame (handles appear); a later press on
         // the selection drags it — same two-step feel as text boxes.
         if (!selected) {
@@ -1913,16 +2146,35 @@ function ImageBoxView({
         }
         beginDrag('move', e);
       }}
-      title="Click to select — drag to move"
+      title={
+        box.ph
+          ? 'Click to add ' + box.ph.toLowerCase()
+          : 'Click to select — drag to move'
+      }
       data-box-id={box.id}
     >
       <img
         ref={(el) => onRegisterImg(box.id, el)}
         src={box.src}
-        alt=""
+        alt={box.ph ?? ''}
         draggable={false}
         className="page-box-image-img"
+        style={{
+          borderRadius: radius,
+          maskImage: mask,
+          WebkitMaskImage: mask,
+          maskComposite: 'intersect',
+          objectFit: 'cover',
+        }}
       />
+
+      {/* Placeholder cover: a dashed frame that fills the box and invites the
+          click-to-add-picture action above. */}
+      {box.ph && (
+        <div className="page-box-ph" aria-hidden="true">
+          <span>Add {box.ph}</span>
+        </div>
+      )}
 
       {selected && !readOnly && (
         <>
@@ -1935,7 +2187,48 @@ function ImageBoxView({
               data-handle={h}
             />
           ))}
-          <div className="page-box-tools" onMouseDown={(e) => e.stopPropagation()}>
+          <div className="page-box-tools page-box-tools-img" onMouseDown={(e) => e.stopPropagation()}>
+            <label className="img-style-field" title="Corner radius (px)">
+              <span>Radius</span>
+              <input
+                type="number"
+                min={0}
+                max={2000}
+                step={1}
+                value={radius}
+                onChange={(e) =>
+                  onGeomChange(box.id, {
+                    radius: Math.max(0, Math.min(2000, Math.round(Number(e.target.value) || 0))),
+                  })
+                }
+              />
+            </label>
+            <label className="img-style-field" title="Soft edge fade (px)">
+              <span>Fade</span>
+              <input
+                type="number"
+                min={0}
+                max={Math.max(0, Math.floor(minSide / 2))}
+                step={1}
+                value={fade}
+                onChange={(e) =>
+                  onGeomChange(box.id, {
+                    fade: Math.max(
+                      0,
+                      Math.min(Math.floor(minSide / 2), Math.round(Number(e.target.value) || 0)),
+                    ),
+                  })
+                }
+              />
+            </label>
+            {box.ph && (
+              <button
+                title="Replace image — pick a picture from your computer"
+                onClick={() => onReplace(box.id)}
+              >
+                <ImagePlus size={13} />
+              </button>
+            )}
             <button
               title="Delete image"
               onClick={() => onDelete(box.id)}

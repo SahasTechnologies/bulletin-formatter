@@ -37,8 +37,9 @@ import {
   Pilcrow,
   CaseSensitive,
   ALargeSmall,
+  Newspaper,
 } from 'lucide-react';
-import { GOOGLE_FONTS } from '../data/googleFonts';
+import { GOOGLE_FONTS, LOCAL_FONTS } from '../data/googleFonts';
 import { useGoogleFont } from './GoogleFontProvider';
 import * as ed from '../lib/editor';
 
@@ -86,7 +87,7 @@ const ALL_KEYS = [
   'find', 'undo', 'redo', 'print', 'spell', 'zoom', 'style', 'font', 'size',
   'bold', 'italic', 'underline', 'textColor', 'highlight', 'minus', 'plus',
   'link', 'image', 'alignL', 'alignC', 'alignR', 'alignJ', 'bullet', 'number',
-  'indentDec', 'indentInc', 'lineSpacing',
+  'indentDec', 'indentInc', 'lineSpacing', 'master',
 ] as const;
 type ItemKey = (typeof ALL_KEYS)[number];
 
@@ -114,6 +115,10 @@ interface ToolbarProps extends ToolbarState {
   onToggleToolbar: () => void;
   /** Insert a picture as its own image box on the page (Insert > Image). */
   onInsertImage?: () => void;
+  /** Toggle the master-page (header & footer) panel. */
+  onToggleMaster?: () => void;
+  /** The master-page panel is currently open (button highlight). */
+  masterOpen?: boolean;
   /** Increment to programmatically open the link dropdown (Ctrl+K / Insert > Link). */
   requestLink?: number;
 }
@@ -128,6 +133,8 @@ export default function Toolbar(props: ToolbarProps) {
     font, size, style, zoom, spellCheck, searchOpen,
     setFont, setSize, setStyle, setZoom, setSpellCheck, setSearchOpen, onToggleToolbar,
     onInsertImage,
+    onToggleMaster,
+    masterOpen = false,
     requestLink = 0,
   } = props;
 
@@ -251,7 +258,8 @@ export default function Toolbar(props: ToolbarProps) {
 
   const fontGroups = useMemo(() => {
     const q = fontQuery.trim().toLowerCase();
-    const filtered = q ? GOOGLE_FONTS.filter((f) => f.family.toLowerCase().includes(q)) : GOOGLE_FONTS;
+    const all = [...LOCAL_FONTS, ...GOOGLE_FONTS];
+    const filtered = q ? all.filter((f) => f.family.toLowerCase().includes(q)) : all;
     return {
       'sans-serif': filtered.filter((f) => f.category === 'sans-serif'),
       serif: filtered.filter((f) => f.category === 'serif'),
@@ -318,7 +326,7 @@ export default function Toolbar(props: ToolbarProps) {
           type="text"
           value={fontQuery}
           onChange={(e) => { setFontQuery(e.target.value); setFontLimit(FONT_PAGE); }}
-          placeholder={`Search ${GOOGLE_FONTS.length.toLocaleString()} fonts…`}
+          placeholder={`Search ${(LOCAL_FONTS.length + GOOGLE_FONTS.length).toLocaleString()} fonts…`}
           className="w-full rounded-md border border-gdoc-border px-2 py-1.5 text-[13px] outline-none focus:border-bb-400"
         />
       </div>
@@ -490,6 +498,8 @@ export default function Toolbar(props: ToolbarProps) {
         return <ToolBtn title="Increase indent" onClick={() => ed.exec('indent')}><IndentIncrease size={18} /></ToolBtn>;
       case 'lineSpacing':
         return <Dropdown open={o('lineSpacing')} onOpenChange={(v) => setOpen(v ? 'lineSpacing' : null)} label={<Rows3 size={18} />} title="Line spacing" width={170}>{renderLineSpacingPanel()}</Dropdown>;
+      case 'master':
+        return <ToolBtn title="Master page — edit the header & footer shown on every page" active={masterOpen} onClick={() => onToggleMaster?.()}><Newspaper size={18} /></ToolBtn>;
       default:
         return null;
     }

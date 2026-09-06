@@ -22,6 +22,10 @@ export interface StoredDocument {
   boxes?: string;
   /** Show the end-of-document tombstone (small black square, last page). */
   tombstone?: boolean;
+  /** Master-page header text (tokens: @page @month @year) shown on every page. */
+  masterHeader?: string;
+  /** Master-page footer text (tokens: @page @month @year) shown on every page. */
+  masterFooter?: string;
 }
 
 const KEY = 'bulletin.recentDocs';

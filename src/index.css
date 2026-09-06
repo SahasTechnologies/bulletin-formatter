@@ -8,6 +8,28 @@ body,
   height: 100%;
 }
 
+/* Biome — the Bulletin masthead typeface. Not on Google Fonts, so it ships
+   with the app (public/fonts/biome.ttf) and any element that names it picks
+   the bundled copy up automatically. */
+@font-face {
+  font-family: 'Biome';
+  src: url('/fonts/biome.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Dreaming Outloud Script Pro — the Bulletin's handwritten 'Thank You for
+   Reading' headline typeface (also a Microsoft 365 cloud font). Bundled the
+   same way as Biome so it needs no internet. */
+@font-face {
+  font-family: 'Dreaming Outloud Script Pro';
+  src: url('/fonts/dreaming-outloud-script-pro.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 body {
   margin: 0;
   /* UI chrome font is Red Hat Text; document font is user-selected. */
@@ -57,6 +79,33 @@ body {
 .doc-paper {
   background: #fff;
   box-shadow: 0 1px 3px rgba(60, 64, 67, 0.15), 0 4px 8px 3px rgba(60, 64, 67, 0.05);
+}
+
+/* Master-page furniture: the running head at the top of every sheet and the
+   folio near the bottom, drawn from the document's master header/footer.
+   Positioned inside each .doc-paper in paper coordinates (px at 100% zoom). */
+.master-band {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  user-select: none;
+  font-family: 'Biome', 'Space Grotesk', 'Red Hat Text', sans-serif;
+  color: #000;
+  white-space: pre;
+}
+.master-band-header {
+  top: 12px;
+  left: 48px;
+  right: 48px;
+  text-align: right;
+  font-size: 17px;
+  line-height: 1.2;
+}
+.master-band-footer {
+  left: 48px;
+  bottom: 40px;
+  font-size: 20px;
+  line-height: 1.2;
 }
 
 /* Consistent underline across fonts. execCommand('underline') emits a bare
@@ -154,6 +203,7 @@ body {
   outline: none;
   padding: 4px;
   box-sizing: border-box;
+  font-family: 'Roboto Condensed', 'Red Hat Text', system-ui, sans-serif;
   font-size: 11pt;
   line-height: 1.5;
   overflow-wrap: break-word;
@@ -174,10 +224,68 @@ body {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: fill;
+  object-fit: cover;
   user-select: none;
   -webkit-user-drag: none;
   pointer-events: none;
+}
+
+/* Inline placeholder (an <img data-ph> living inside a text box / table cell
+   can't become a click-to-add frame): draw a dashed frame around it so the
+   'insert your photo here' spot is obvious. */
+.doc-surface img[data-ph],
+.page-box-content img[data-ph] {
+  border: 2px dashed #b9b0a4;
+  box-sizing: border-box;
+}
+
+/* Placeholder image frame (templates: 'click to add …'). The dashed cover
+   sits above the transparent backing image and invites the click that opens
+   the file picker; it vanishes as soon as a real picture is dropped in. */
+.page-box-image.is-ph {
+  cursor: pointer;
+}
+.page-box-ph {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  background:
+    linear-gradient(rgba(250, 247, 244, 0.9), rgba(250, 247, 244, 0.9)),
+    repeating-linear-gradient(
+      45deg,
+      rgba(190, 176, 158, 0.35) 0,
+      rgba(190, 176, 158, 0.35) 8px,
+      rgba(255, 255, 255, 0.75) 8px,
+      rgba(255, 255, 255, 0.75) 16px
+    );
+  border: 2px dashed #b9b0a4;
+  box-sizing: border-box;
+}
+.page-box-ph span {
+  display: inline-block;
+  max-width: 80%;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #e0d8cc;
+  color: #6f6559;
+  font-family: 'Red Hat Text', system-ui, sans-serif;
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: center;
+  box-shadow: 0 1px 4px rgba(60, 64, 67, 0.12);
+}
+.page-box.is-ph:hover .page-box-ph {
+  border-color: #1a73e8;
+}
+.page-box.is-ph:hover .page-box-ph span {
+  background: #1a73e8;
+  border-color: #1a73e8;
+  color: #fff;
 }
 .page-box:not(.is-selected):not(.is-editing) .page-box-content {
   user-select: none;
@@ -269,6 +377,56 @@ body {
 }
 .page-box-tools button:hover {
   background: #f4f1ec;
+}
+.page-box-tools button.is-active {
+  background: #1a73e8;
+  color: #fff;
+}
+.page-box-tools button.is-active:hover {
+  background: #1a73e8;
+}
+.page-box-tools-img {
+  gap: 4px;
+  padding: 3px 4px;
+}
+.page-box-tools-img .img-style-field {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+.page-box-tools-img .img-style-field span {
+  font-size: 8px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8a8177;
+  padding-left: 2px;
+}
+.page-box-tools-img .img-style-field input {
+  width: 46px;
+  height: 18px;
+  padding: 0 2px;
+  font-size: 10px;
+  line-height: 1;
+  text-align: center;
+  color: #3c342b;
+  background: #fff;
+  border: 1px solid #ddd5cb;
+  border-radius: 4px;
+  outline: none;
+  -moz-appearance: textfield;
+}
+.page-box-tools-img .img-style-field input::-webkit-outer-spin-button,
+.page-box-tools-img .img-style-field input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.page-box-tools-img .img-style-field input:focus {
+  border-color: #1a73e8;
+}
+.page-box-tools-img .img-style-field input:hover {
+  border-color: #b9b0a4;
 }
 
 /* End-of-document tombstone: a small black rounded square tucked into the

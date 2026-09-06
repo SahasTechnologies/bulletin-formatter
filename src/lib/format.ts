@@ -17,6 +17,10 @@ export interface BulletinDoc {
   template?: string;
   /** Text boxes (frames) serialized as JSON, when the document uses them. */
   boxes?: string;
+  /** Master-page header text (tokens: @page @month @year). */
+  masterHeader?: string;
+  /** Master-page footer text (tokens: @page @month @year). */
+  masterFooter?: string;
 }
 
 export const BULLETIN_EXT = 'bulletin';
@@ -42,6 +46,8 @@ export function parseBulletin(raw: string): BulletinDoc | null {
       updatedAt: typeof data.updatedAt === 'number' ? data.updatedAt : Date.now(),
       template: typeof data.template === 'string' ? data.template : undefined,
       boxes: typeof data.boxes === 'string' ? data.boxes : undefined,
+      masterHeader: typeof data.masterHeader === 'string' ? data.masterHeader : undefined,
+      masterFooter: typeof data.masterFooter === 'string' ? data.masterFooter : undefined,
     };
   } catch {
     return null;
@@ -58,7 +64,7 @@ export function downloadBulletin(doc: BulletinDoc): void {
  * minimal page so it opens and prints correctly in any browser.
  */
 export function downloadHtml(title: string, content: string): void {
-  const html = `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8" />\n<title>${escapeHtml(title)}</title>\n<style>\n  body { margin: 0; background: #fff; }\n  .page { max-width: 794px; margin: 0 auto; padding: 80px 96px; font-family: 'Red Hat Text', system-ui, sans-serif; font-size: 11pt; line-height: 1.5; color: #2b2622; }\n  table { border-collapse: collapse; }\n  img { max-width: 100%; }\n  @media print { .page { padding: 0; } }\n</style>\n</head>\n<body>\n<div class="page">\n${content}\n</div>\n</body>\n</html>`;
+  const html = `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8" />\n<title>${escapeHtml(title)}</title>\n<style>\n  body { margin: 0; background: #fff; }\n  .page { max-width: 794px; margin: 0 auto; padding: 80px 96px; font-family: 'Roboto Condensed', 'Red Hat Text', system-ui, sans-serif; font-size: 11pt; line-height: 1.5; color: #2b2622; }\n  table { border-collapse: collapse; }\n  img { max-width: 100%; }\n  @media print { .page { padding: 0; } }\n</style>\n</head>\n<body>\n<div class="page">\n${content}\n</div>\n</body>\n</html>`;
   downloadBlob(html, 'text/html;charset=utf-8', `${title || 'untitled'}.html`);
 }
 

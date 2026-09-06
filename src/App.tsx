@@ -91,6 +91,14 @@ export default function App() {
   const tombstoneRef = useRef(false);
   /** Right-hand panel with saved versions (File > Version history). */
   const [versionsOpen, setVersionsOpen] = useState(false);
+  /** Right-hand panel editing the master header/footer (View > Header & footer). */
+  const [masterOpen, setMasterOpen] = useState(false);
+  /** Master-page furniture: plain text shown on every page, tokens @page,
+      @month and @year are filled in per page (page number + today's date). */
+  const [masterHeader, setMasterHeader] = useState('');
+  const [masterFooter, setMasterFooter] = useState('');
+  const masterHeaderRef = useRef('');
+  const masterFooterRef = useRef('');
 
   /** Version of the document content passed to the canvas (bump = reload). */
   const [canvasRev, setCanvasRev] = useState(0);
@@ -137,6 +145,8 @@ export default function App() {
     };
     if (boxesRef.current) doc.boxes = boxesRef.current;
     if (tombstoneRef.current) doc.tombstone = tombstoneRef.current;
+    if (masterHeaderRef.current) doc.masterHeader = masterHeaderRef.current;
+    if (masterFooterRef.current) doc.masterFooter = masterFooterRef.current;
     activeDocRef.current = doc;
     saveDoc(doc);
     // Automatic version snapshot (throttled by word-count drift in storage).
@@ -150,11 +160,25 @@ export default function App() {
     setRecentDocs(loadRecentDocs());
   }, []);
 
-  // Keep the tombstone ref in step so persistNow (stable, ref-based) always
-  // writes the current flag.
+  // Keep the tombstone + master refs in step so persistNow (stable, ref-based)
+  // always writes the current flags.
   useEffect(() => {
     tombstoneRef.current = tombstone;
   }, [tombstone]);
+  useEffect(() => {
+    masterHeaderRef.current = masterHeader;
+  }, [masterHeader]);
+  useEffect(() => {
+    masterFooterRef.current = masterFooter;
+  }, [masterFooter]);
+
+  /** Debounced save of the master header/footer text. */
+  const applyMaster = useCallback((patch: { header?: string; footer?: string }) => {
+    if (patch.header !== undefined) setMasterHeader(patch.header);
+    if (patch.footer !== undefined) setMasterFooter(patch.footer);
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = setTimeout(persistNow, 400);
+  }, [persistNow]);
 
   /** Toggle the end-of-document tombstone and save the flag immediately. */
   const toggleTombstone = useCallback(() => {
@@ -203,6 +227,11 @@ export default function App() {
     boxesRef.current = null;
     tombstoneRef.current = false;
     setTombstone(false);
+    masterHeaderRef.current = tpl.master?.header ?? '';
+    setMasterHeader(masterHeaderRef.current);
+    masterFooterRef.current = tpl.master?.footer ?? '';
+    setMasterFooter(masterFooterRef.current);
+    setMasterOpen(false);
     setRecentDocs(saveDoc(doc));
     setScreen('editor');
   }, []);
@@ -223,6 +252,11 @@ export default function App() {
     boxesRef.current = doc.boxes ?? null;
     tombstoneRef.current = doc.tombstone ?? false;
     setTombstone(doc.tombstone ?? false);
+    masterHeaderRef.current = doc.masterHeader ?? '';
+    setMasterHeader(masterHeaderRef.current);
+    masterFooterRef.current = doc.masterFooter ?? '';
+    setMasterFooter(masterFooterRef.current);
+    setMasterOpen(false);
     setRecentDocs(saveDoc(refreshed));
     setScreen('editor');
   }, []);
@@ -257,6 +291,8 @@ export default function App() {
     setShowToolbar(true);
     setSearchOpen(false);
     setDialog(null);
+    setMasterOpen(false);
+    setVersionsOpen(false);
     setScreen('home');
   }, [persistNow]);
 
@@ -274,6 +310,8 @@ export default function App() {
         updatedAt: Date.now(),
         template: activeDocRef.current?.template,
         boxes: boxesRef.current ?? undefined,
+        masterHeader: masterHeaderRef.current || undefined,
+        masterFooter: masterFooterRef.current || undefined,
       };
       downloadBulletin(doc);
     },
@@ -306,6 +344,11 @@ export default function App() {
       boxesRef.current = parsed.boxes ?? null;
       tombstoneRef.current = false;
       setTombstone(false);
+      masterHeaderRef.current = parsed.masterHeader ?? '';
+      setMasterHeader(masterHeaderRef.current);
+      masterFooterRef.current = parsed.masterFooter ?? '';
+      setMasterFooter(masterFooterRef.current);
+      setMasterOpen(false);
       setRecentDocs(saveDoc(doc));
       setScreen('editor');
     };
@@ -397,6 +440,10 @@ export default function App() {
               setTitle(parsed.title);
               setPageName(parsed.page === 'Letter' ? 'Letter' : 'A4');
               replaceDocContent(parsed.content, parsed.boxes);
+              masterHeaderRef.current = parsed.masterHeader ?? '';
+              setMasterHeader(masterHeaderRef.current);
+              masterFooterRef.current = parsed.masterFooter ?? '';
+              setMasterFooter(masterFooterRef.current);
               recalc();
               persistNow();
             };
@@ -445,6 +492,7 @@ export default function App() {
           // Save first so the freshest snapshot is in the list, then open the
           // right-hand history panel.
           persistNow();
+          setMasterOpen(false);
           setVersionsOpen(true);
           break;
         case 'file.details':
@@ -503,6 +551,10 @@ export default function App() {
         case 'view.zoomreset': setZoom(100); break;
         case 'view.ruler': setShowRuler((r) => !r); break;
         case 'view.toolbar': setShowToolbar((t) => !t); break;
+        case 'view.master':
+          setVersionsOpen(false);
+          setMasterOpen((o) => !o);
+          break;
         case 'view.fullscreen':
           if (document.fullscreenElement) document.exitFullscreen();
           else document.documentElement.requestFullscreen?.();
@@ -775,6 +827,8 @@ export default function App() {
               setSearchOpen={setSearchOpen}
               onToggleToolbar={() => setShowToolbar(false)}
               onInsertImage={insertImageBox}
+              onToggleMaster={() => setMasterOpen((o) => !o)}
+              masterOpen={masterOpen}
               requestLink={linkRequest}
             />
           ) : (
@@ -856,6 +910,8 @@ export default function App() {
                 onDocChange={handleDocChange}
                 readOnly={viewMode === 'viewing'}
                 tombstone={tombstone}
+                masterHeader={masterHeader}
+                masterFooter={masterFooter}
               />
             </div>
 
@@ -869,6 +925,16 @@ export default function App() {
                   persistNow();
                   setVersionsOpen(false);
                 }}
+              />
+            )}
+
+            {masterOpen && (
+              <MasterPanel
+                header={masterHeader}
+                footer={masterFooter}
+                onHeaderChange={(h) => applyMaster({ header: h })}
+                onFooterChange={(f) => applyMaster({ footer: f })}
+                onClose={() => setMasterOpen(false)}
               />
             )}
           </div>
@@ -1140,6 +1206,122 @@ function VersionPanel({
           </div>
         </>
       )}
+    </aside>
+  );
+}
+
+/* ---------- View > Header & footer (master page) ---------- */
+
+const MASTER_TOKENS: { token: string; label: string }[] = [
+  { token: '@page', label: 'Page number' },
+  { token: '@month', label: 'Current month' },
+  { token: '@year', label: 'Current year' },
+];
+
+function MasterPanel({
+  header,
+  footer,
+  onHeaderChange,
+  onFooterChange,
+  onClose,
+}: {
+  header: string;
+  footer: string;
+  onHeaderChange: (h: string) => void;
+  onFooterChange: (f: string) => void;
+  onClose: () => void;
+}) {
+  const headerAreaRef = useRef<HTMLTextAreaElement>(null);
+  const footerAreaRef = useRef<HTMLTextAreaElement>(null);
+
+  /** Insert a token at the caret of whichever field is focused. */
+  const insertToken = (token: string) => {
+    const areas = [headerAreaRef.current, footerAreaRef.current];
+    const el = areas.find((a) => a === document.activeElement) ?? headerAreaRef.current;
+    if (!el) return;
+    const value = el === headerAreaRef.current ? header : footer;
+    const at = el.selectionStart ?? value.length;
+    const next = value.slice(0, at) + token + value.slice(el.selectionEnd ?? at);
+    if (el === headerAreaRef.current) onHeaderChange(next);
+    else onFooterChange(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(at + token.length, at + token.length);
+    });
+  };
+
+  const field =
+    'min-h-0 w-full resize-none rounded-md border border-gdoc-border bg-white px-2.5 py-2 text-[13px] leading-relaxed outline-none focus:border-bb-400';
+
+  return (
+    <aside className="no-print flex w-[350px] flex-none flex-col border-l border-gdoc-border bg-[#faf7f4]">
+      <div className="flex flex-none items-center gap-2 border-b border-gdoc-border px-4 py-3">
+        <FileText size={15} className="flex-none text-bb-600" />
+        <h2 className="flex-1 text-[13px] font-semibold text-[#2b2622]">Header &amp; footer</h2>
+        <button
+          onClick={onClose}
+          title="Close header & footer"
+          className="rounded p-1 text-gdoc-muted hover:bg-gdoc-hover"
+        >
+          <X size={16} />
+        </button>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        <p className="mb-3 text-[12px] leading-relaxed text-gdoc-muted">
+          This is the document’s <span className="font-medium text-[#2b2622]">master</span>: the
+          running head and folio that print on every page, like the Bulletin’s furniture. Edit
+          them once here — every page updates. Leave a field blank to hide it.
+        </p>
+
+        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-gdoc-muted">
+          Header (top of every page)
+        </label>
+        <textarea
+          ref={headerAreaRef}
+          value={header}
+          onChange={(e) => onHeaderChange(e.target.value)}
+          rows={2}
+          spellCheck={false}
+          placeholder="Baulko Bulletin | n+●●"
+          className={field}
+        />
+
+        <label className="mb-1 mt-3 block text-[11px] font-semibold uppercase tracking-wide text-gdoc-muted">
+          Footer (page number + date)
+        </label>
+        <textarea
+          ref={footerAreaRef}
+          value={footer}
+          onChange={(e) => onFooterChange(e.target.value)}
+          rows={2}
+          spellCheck={false}
+          placeholder="@page |  @month @year"
+          className={field}
+        />
+
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] text-gdoc-muted">Insert:</span>
+          {MASTER_TOKENS.map((t) => (
+            <button
+              key={t.token}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => insertToken(t.token)}
+              title={t.label}
+              className="rounded-full border border-gdoc-border bg-white px-2.5 py-1 text-[11px] font-medium text-[#2b2622] hover:border-bb-400 hover:bg-bb-500/10"
+            >
+              {t.label} <span className="text-bb-600">{t.token}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-4 rounded-md border border-gdoc-border bg-white px-3 py-2.5 text-[12px] leading-relaxed text-gdoc-muted">
+          <span className="font-semibold text-[#2b2622]">Tip:</span> on the page, header and footer
+          text is set in the Bulletin’s <em>Biome</em> masthead typeface, and{' '}
+          <code className="rounded bg-gdoc-hover px-1 text-[11px]">@page</code> is replaced with each
+          sheet’s page number as you add pages.
+        </div>
+      </div>
     </aside>
   );
 }
