@@ -198,6 +198,109 @@ function stripProperty(root: DocumentFragment | Element, prop: string): void {
 }
 
 /**
+ * The part of `range` that falls inside `block`, or null when they don't meet.
+ *
+ * Boundary-point comparison is done in both directions because a range can
+ * start before and/or end after the block: we need the overlap, not "does it
+ * touch it".
+ */
+function rangeInside(range: Range, block: HTMLElement): Range | null {
+  const doc = block.ownerDocument;
+  const b = doc.createRange();
+  b.selectNodeContents(block);
+  // range.start at/after block end, or range.end at/before block start.
+  if (range.compareBoundaryPoints(Range.START_TO_END, b) >= 0) return null;
+  if (range.compareBoundaryPoints(Range.END_TO_START, b) <= 0) return null;
+  const out = doc.createRange();
+  if (range.compareBoundaryPoints(Range.START_TO_START, b) >= 0) {
+    out.setStart(range.startContainer, range.startOffset);
+  } else {
+    out.setStart(b.startContainer, b.startOffset);
+  }
+  if (range.compareBoundaryPoints(Range.END_TO_END, b) <= 0) {
+    out.setEnd(range.endContainer, range.endOffset);
+  } else {
+    out.setEnd(b.endContainer, b.endOffset);
+  }
+  return out.collapsed ? null : out;
+}
+
+/** Wrap the contents of `range` in a span carrying `prop: value`. */
+function wrapRange(part: Range, prop: string, value: string): HTMLElement | null {
+  const span = document.createElement('span');
+  span.style.setProperty(prop, value);
+  const frag = part.extractContents();
+  stripProperty(frag, prop);
+  unwrapStylelessSpans(frag);
+  span.appendChild(frag);
+  part.insertNode(span);
+  return span;
+}
+
+/**
+ * Style a selection that spans several blocks.
+ *
+ * The old implementation handed the work to `execCommand`, which only knows
+ * three properties (font name, colour, highlight) — so `font-size` across two
+ * paragraphs was silently routed to `foreColor` and the size never changed.
+ * Doing it ourselves also keeps the full font fallback stack instead of the
+ * bare family `execCommand('fontName')` writes out.
+ */
+function applyAcrossBlocks(
+  range: Range,
+  rawBlocks: HTMLElement[],
+  prop: string,
+  value: string,
+): void {
+  // Nested matches (a <div> inside a selected <div>) would both be wrapped,
+  // producing span-in-span. Keep only the outermost ones.
+  const blocks = rawBlocks.filter((b) => !rawBlocks.some((o) => o !== b && o.contains(b)));
+
+  // Snapshot every intersection BEFORE touching the DOM: extracting a range
+  // rewrites the tree, which moves any boundary still pointing inside it.
+  const parts: { block: HTMLElement; range: Range }[] = [];
+  for (const b of blocks) {
+    const part = rangeInside(range, b);
+    if (part) parts.push({ block: b, range: part });
+  }
+
+  const created: HTMLElement[] = [];
+  // Walk backwards: a wrap only rewrites the block being handled, so doing the
+  // last block first leaves every earlier boundary point untouched.
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const { block, range: part } = parts[i];
+    if (!block.isConnected) continue;
+    if (rangeCoversContent(part, block)) {
+      // The whole block is selected — style the block itself and drop any
+      // inline value buried inside it, otherwise the two fight each other.
+      block.style.setProperty(prop, value);
+      for (const child of Array.from(block.children)) stripProperty(child, prop);
+      created.unshift(block);
+      continue;
+    }
+    const span = wrapRange(part, prop, value);
+    if (span) created.unshift(span);
+  }
+
+  // Re-select what we just styled so the toolbar keeps tracking the run.
+  if (created.length) {
+    try {
+      const r = document.createRange();
+      r.setStartBefore(created[0]);
+      r.setEndAfter(created[created.length - 1]);
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(r);
+      }
+      savedRange = r.cloneRange();
+    } catch {
+      /* a detached node means the caller will re-capture */
+    }
+  }
+}
+
+/**
  * After stripping a property, spans that no longer carry any style (or any
  * attribute at all) are dead wrappers left behind by a previous formatting
  * pass — unwrap them so the document doesn't accumulate markup litter.
@@ -273,22 +376,13 @@ export function applyInlineStyle(prop: string, value: string): void {
   // selected run consistently and preserves existing properties.
   if (blocks.length > 1) {
     try {
-      document.execCommand('styleWithCSS', false, 'true');
-      // execCommand('fontName') expects a bare family name — a quoted,
-      // comma-separated stack silently produces mixed/wrong output. The
-      // fallback stack is unnecessary anyway: quoted families that fail to
-      // load simply fall through to the page's default fonts.
-      const family = prop === 'font-family' ? value.replace(/^["']+|['"],.*$/g, '').trim() : value;
-      document.execCommand(prop === 'background-color' ? 'hiliteColor' : prop === 'font-family' ? 'fontName' : 'foreColor', false, prop === 'font-family' ? family : value);
-      captureSelection();
-      notifyInput();
-      return;
+      applyAcrossBlocks(range, blocks, prop, value);
     } catch {
       for (const b of blocks) b.style.setProperty(prop, value);
-      captureSelection();
-      notifyInput();
-      return;
     }
+    captureSelection();
+    notifyInput();
+    return;
   }
 
   // Single block (or plain text): wrap in a styled span.
@@ -459,8 +553,12 @@ export function insertLink(url: string): void {
     return;
   }
   // Collapsed caret: createLink has nothing to wrap, so insert a fresh link.
-  const attr = safe.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  exec('insertHTML', `<a href="${attr}">${attr}</a>&nbsp;`);
+  // Built through the DOM so href and text are each escaped exactly once —
+  // hand-rolling the HTML double-escaped an `&` into a visible "&amp;".
+  const a = document.createElement('a');
+  a.href = safe;
+  a.textContent = safe;
+  exec('insertHTML', `${a.outerHTML}&nbsp;`);
 }
 
 /** Computed CSS value at the caret, e.g. `currentStyle('fontFamily')`. */
@@ -508,14 +606,28 @@ export function replaceAll(query: string, replacement: string): number {
   if (!editorEl || !query) return 0;
   const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const re = new RegExp(escaped, 'gi');
-  const html = editorEl.innerHTML;
-  const count = html.match(re)?.length ?? 0;
-  // Escape `$` patterns in the replacement so user text like "$&" is literal.
-  const safe = replacement.replace(/\$/g, '$$$$');
+
+  // Only ever touch TEXT nodes. Rewriting `innerHTML` would happily rewrite
+  // markup too — replacing the single letter "p" would shred every <p> tag and
+  // every `p` inside an attribute, corrupting the document.
+  const walker = document.createTreeWalker(editorEl, NodeFilter.SHOW_TEXT);
+  const nodes: Text[] = [];
+  let n: Node | null;
+  while ((n = walker.nextNode())) nodes.push(n as Text);
+
+  let count = 0;
+  for (const node of nodes) {
+    const hits = node.data.match(re);
+    if (!hits) continue;
+    count += hits.length;
+    // Assigning to `data` is a literal replacement — no `$&` expansion to
+    // escape, and no markup can be produced by the replacement text.
+    node.data = node.data.replace(re, replacement);
+  }
+
   if (count > 0) {
-    editorEl.innerHTML = html.replace(re, safe);
     captureSelection();
-    // The innerHTML surgery above bypasses the normal input pipeline, so the
+    // The surgery above bypasses the normal input pipeline, so the
     // canvas/autosave would never hear about the replacement (the old text
     // stayed on disk until the next keystroke). Announce it like a keystroke.
     notifyInput();

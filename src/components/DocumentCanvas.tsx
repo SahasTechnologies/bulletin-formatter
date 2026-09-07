@@ -14,11 +14,23 @@ import {
 } from '../lib/textbox';
 import { useGoogleFont } from './GoogleFontProvider';
 import { GOOGLE_FONT_FAMILIES } from '../data/googleFonts';
+import {
+  bandForPage,
+  fillMasterTokens,
+  slotForPage,
+  BAND_LABELS,
+  type BandKey,
+  type BandSlot,
+  type MasterBand,
+  type MasterPage,
+} from '../lib/master';
 
 const RULER_SIZE = 28; // px thickness shared by the top and left rulers
 const PAGE_GAP = 32; // flex gap (gap-8) between page sheets
 const MIN_W = 60;
 const MIN_H = 40;
+/** Height of the header/footer band drawn in a page's top/bottom margin. */
+const MASTER_BAND_H = 28;
 /** 1×1 transparent GIF — the invisible backing picture of a placeholder box
     (its dashed 'click to add' cover is drawn by CSS, see .page-box-ph). */
 const TRANSPARENT_GIF =
@@ -34,18 +46,30 @@ const DRAG_THRESHOLD = 3;
 
 const DEFAULT_MARGINS = { left: 96, right: 96, top: 80, bottom: 80 };
 
-const MASTER_MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
-
-/** Fill the @page / @month / @year tokens in a master header/footer line. */
-function fillMaster(text: string, pageNumber: number): string {
-  const now = new Date();
-  return (text || '')
-    .replace(/@page/g, String(pageNumber))
-    .replace(/@month/g, MASTER_MONTHS[now.getMonth()] ?? '')
-    .replace(/@year/g, String(now.getFullYear()));
+/**
+ * Where a header/footer band sits on the sheet.
+ *
+ * Publisher puts the furniture *inside* the page margins, not on top of the
+ * text: the header is centred in the top margin, the footer centred in the
+ * bottom margin, and both span the full width of the text column. That way
+ * dragging a margin arrow moves the running head with it.
+ */
+function masterBandBox(
+  slot: BandSlot,
+  page: { width: number; height: number },
+  margins: typeof DEFAULT_MARGINS,
+) {
+  const h = MASTER_BAND_H;
+  const top =
+    slot === 'header'
+      ? Math.max(6, Math.round((margins.top - h) / 2))
+      : page.height - margins.bottom + Math.max(4, Math.round((margins.bottom - h) / 2));
+  return {
+    left: margins.left,
+    top,
+    width: Math.max(60, page.width - margins.left - margins.right),
+    height: h,
+  };
 }
 
 /**
@@ -106,10 +130,16 @@ interface DocumentCanvasProps {
   onDocChange: (html: string, boxesJson: string) => void;
   /** Show the end-of-document tombstone (small black square) on the last page. */
   tombstone?: boolean;
-  /** Master-page header/footer: plain text on every page, tokens @page,
-      @month and @year are resolved per page (number + today's date). */
-  masterHeader?: string;
-  masterFooter?: string;
+  /** The document's master page: header/footer furniture for every sheet. */
+  master?: MasterPage;
+  /** Master-page view: the furniture is editable in place, the page is not. */
+  masterMode?: boolean;
+  /** Bumped when the master's text was changed off-page, to re-seed the bands. */
+  masterRev?: number;
+  /** Document title, for the @title field token. */
+  docTitle?: string;
+  /** The user typed into one of the master's bands. */
+  onMasterBandChange?: (slot: BandKey, patch: { text: string }) => void;
 }
 
 let boxSeq = 0;
@@ -463,10 +493,15 @@ export default function DocumentCanvas({
   imageSrc,
   onDocChange,
   tombstone = false,
-  masterHeader = '',
-  masterFooter = '',
+  master,
+  masterMode = false,
+  masterRev = 0,
+  docTitle = '',
+  onMasterBandChange,
 }: DocumentCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  // An absent master renders nothing rather than crashing the canvas.
+  const masterPage: MasterPage | null = master ?? null;
 
   // Page margins (px) that the rulers edit by dragging the blue arrows. They
   // shape the printable-area shading on the rulers and the column migrated
@@ -491,6 +526,13 @@ export default function DocumentCanvas({
     activePageRef.current = Math.max(0, p);
     setActivePageUi(Math.max(0, p));
   }, []);
+
+  // Master view always edits page 1's furniture (page 2 too for odd & even),
+  // so jump there — otherwise the highlighted sidebar page and the sheet on
+  // screen disagree.
+  useEffect(() => {
+    if (masterMode) activatePage(0);
+  }, [masterMode, activatePage]);
 
   /** Last-snapshotted text of every box: used to seed frames that remount
       (page moves) and to paint the sidebar thumbnails without touching the
@@ -1274,6 +1316,31 @@ export default function DocumentCanvas({
   /** Whether the document has any real content (vs. blank/empty pages). */
   const hasAnyContent = boxesState.some((b) => b.kind !== 'sheet');
 
+  /**
+   * Which sheets to draw. Master-page view shows just the master itself —
+   * page 1, plus page 2 when odd & even furniture is on, so the even-page
+   * bands have somewhere to be edited.
+   */
+  const sheets: number[] = masterMode
+    ? // Page 2 is laid out beside page 1 when the furniture differs there, so
+      // every variant has somewhere to be edited. It also has to be shown when
+      // page 1 is bare — otherwise the default bands would have no home.
+      masterPage && (masterPage.differentOddEven || !masterPage.showOnFirstPage)
+      ? [0, 1]
+      : [0]
+    : Array.from({ length: pageCount }, (_, i) => i);
+
+  /** Resolve a band for one sheet, or null when that page carries none. */
+  const resolved = useCallback(
+    (slot: BandSlot, pageIndex: number): MasterBand | null => {
+      if (!masterPage) return null;
+      const b = bandForPage(masterPage, slot, pageIndex);
+      if (!b || !b.text.trim()) return null;
+      return b;
+    },
+    [masterPage],
+  );
+
   return (
     <div className="doc-wrap flex min-h-0 w-full">
       <PageSidebar
@@ -1294,8 +1361,10 @@ export default function DocumentCanvas({
             pageH={page.height}
             contentOf={contentOf}
             showTombstone={tombstone && i === pageCount - 1}
-            masterHeader={masterHeader}
-            masterFooter={masterFooter}
+            master={masterPage}
+            pageCount={pageCount}
+            docTitle={docTitle}
+            margins={margins}
           />
         )}
       />
@@ -1370,11 +1439,11 @@ export default function DocumentCanvas({
             } as React.CSSProperties
           }
         >
-          {Array.from({ length: pageCount }, (_, pageIndex) => (
+          {sheets.map((pageIndex) => (
             <div
               key={pageIndex}
               data-sheet={pageIndex}
-              className="doc-paper relative"
+              className={`doc-paper relative ${masterMode ? 'is-master' : ''}`}
               style={{
                 width: `${page.width}px`,
                 height: `${page.height}px`,
@@ -1383,10 +1452,12 @@ export default function DocumentCanvas({
               }}
             >
               <div
-                className={`page-box-layer relative h-full w-full ${pourSourceId ? 'is-pouring' : ''}`}
+                className={`page-box-layer relative h-full w-full ${pourSourceId ? 'is-pouring' : ''} ${
+                  masterMode ? 'is-master-layer' : ''
+                }`}
                 onMouseDown={() => paperMouseDown(pageIndex)}
               >
-                {pageIndex === 0 && !hasAnyContent && hint}
+                {pageIndex === 0 && !hasAnyContent && !masterMode && hint}
 
                 {boxesState
                   .filter((b) => b.pageIndex === pageIndex && b.kind !== 'sheet')
@@ -1447,16 +1518,48 @@ export default function DocumentCanvas({
                 </svg>
               )}
 
-              {masterHeader && (
-                <div className="master-band master-band-header">
-                  {fillMaster(masterHeader, pageIndex + 1)}
-                </div>
-              )}
-              {masterFooter && (
-                <div className="master-band master-band-footer">
-                  {fillMaster(masterFooter, pageIndex + 1)}
-                </div>
-              )}
+              {/* Master-page furniture. In master view the bands become live
+                  text you type straight into, wrapped in the dashed
+                  non-printing guides Publisher draws on the master. */}
+              {masterPage && (['header', 'footer'] as BandSlot[]).map((slot) => {
+                // A page that prints no furniture offers nothing to edit.
+                if (pageIndex === 0 && !masterPage.showOnFirstPage) return null;
+                if (masterMode) {
+                  const key = slotForPage(masterPage!, slot, pageIndex);
+                  const source = masterPage![key];
+                  return (
+                    <MasterBandView
+                      key={`${slot}-${pageIndex}-${key}-${rev}-${masterRev}`}
+                      slot={slot}
+                      label={BAND_LABELS[key]}
+                      box={masterBandBox(slot, page, margins)}
+                      bandHeight={MASTER_BAND_H}
+                      text={source.text}
+                      align={source.align}
+                      placeholder={slot === 'header' ? 'Header' : 'Footer'}
+                      editable={!readOnly}
+                      onChange={(text) => onMasterBandChange?.(key, { text })}
+                    />
+                  );
+                }
+                const band = resolved(slot, pageIndex);
+                if (!band) return null;
+                return (
+                  <div
+                    key={`${slot}-${pageIndex}`}
+                    className={`master-band master-band-${slot}`}
+                    style={{
+                      ...masterBandBox(slot, page, margins),
+                      textAlign: band.align,
+                      // A single line box as tall as the band centres the
+                      // furniture vertically inside its margin slot.
+                      lineHeight: `${MASTER_BAND_H}px`,
+                    }}
+                  >
+                    {fillMasterTokens(band.text, pageIndex + 1, pageCount, docTitle)}
+                  </div>
+                );
+              })}
             </div>
           ))}
         </div>
@@ -1470,20 +1573,22 @@ export default function DocumentCanvas({
             top: `${RULER_SIZE}px`,
             left: 0,
             width: `${RULER_SIZE}px`,
-            height: `${
-              pageCount * page.height * scale + (pageCount - 1) * PAGE_GAP + 2 * PAGE_GAP
-            }px`,
+            // Layout height, not painted height: the sheets are scaled with a
+            // CSS transform, which does not change how tall the stack is, so
+            // multiplying by `scale` made the ruler stop short when zoomed out
+            // and overrun the page when zoomed in.
+            height: `${pageCount * page.height + (pageCount - 1) * PAGE_GAP + 2 * PAGE_GAP}px`,
           }}
         >
           <div className="absolute inset-0">
-            <div className="absolute inset-x-0 top-0 bg-gdoc-muted/10" style={{ height: `${PAGE_GAP + margins.top * scale}px` }} />
-            <div className="absolute inset-x-0 bottom-0 bg-gdoc-muted/10" style={{ height: `${PAGE_GAP + margins.bottom * scale}px` }} />
+            <div className="absolute inset-x-0 top-0 bg-gdoc-muted/10" style={{ height: `${PAGE_GAP + margins.top}px` }} />
+            <div className="absolute inset-x-0 bottom-0 bg-gdoc-muted/10" style={{ height: `${PAGE_GAP + margins.bottom}px` }} />
           </div>
           <div
             className="absolute flex flex-col"
             style={{
-              top: `${PAGE_GAP + margins.top * scale}px`,
-              bottom: `${PAGE_GAP + margins.bottom * scale}px`,
+              top: `${PAGE_GAP + margins.top}px`,
+              bottom: `${PAGE_GAP + margins.bottom}px`,
               left: 0,
               right: 0,
             }}
@@ -1501,7 +1606,7 @@ export default function DocumentCanvas({
           </div>
           {(['top', 'bottom'] as const).map((side) => {
             const isTop = side === 'top';
-            const pos = PAGE_GAP + (isTop ? margins.top : page.height - margins.bottom) * scale;
+            const pos = PAGE_GAP + (isTop ? margins.top : page.height - margins.bottom);
             return (
               <div
                 key={side}
@@ -1535,12 +1640,16 @@ export default function DocumentCanvas({
     e.stopPropagation();
     const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
     const MIN = 12;
-    const startPos = axis === 'top' || axis === 'bottom' ? e.clientY : e.clientX;
+    const vertical = axis === 'top' || axis === 'bottom';
+    const startPos = vertical ? e.clientY : e.clientX;
     const startValue = margins[axis];
+    // The top ruler is drawn at zoom scale; the side ruler sits in the
+    // unscaled scroll content, so its arrows move in layout pixels.
+    const axisScale = vertical ? 1 : scale;
 
     const onMove = (ev: MouseEvent) => {
-      const cur = axis === 'top' || axis === 'bottom' ? ev.clientY : ev.clientX;
-      const delta = (cur - startPos) / scale;
+      const cur = vertical ? ev.clientY : ev.clientX;
+      const delta = (cur - startPos) / (axisScale || 1);
       if (axis === 'left') {
         setMargins((m) => ({ ...m, left: clamp(startValue + delta, MIN, page.width / 2 - MIN) }));
       } else if (axis === 'right') {
@@ -1571,8 +1680,10 @@ function PageThumb({
   pageH,
   contentOf,
   showTombstone,
-  masterHeader = '',
-  masterFooter = '',
+  master,
+  pageCount,
+  docTitle = '',
+  margins = DEFAULT_MARGINS,
 }: {
   boxes: TextBox[];
   pageIndex: number;
@@ -1580,9 +1691,12 @@ function PageThumb({
   pageH: number;
   contentOf: (b: TextBox) => string;
   showTombstone: boolean;
-  masterHeader: string;
-  masterFooter: string;
+  master?: MasterPage | null;
+  pageCount: number;
+  docTitle?: string;
+  margins?: typeof DEFAULT_MARGINS;
 }) {
+  const page = { width: pageW, height: pageH };
   return (
     <div className="relative bg-white" style={{ width: pageW, height: pageH }}>
       {      boxes
@@ -1648,16 +1762,103 @@ function PageThumb({
           <rect x="0.5" y="0.5" width="11" height="11" rx="3.5" fill="#1f1f1f" />
         </svg>
       )}
-      {masterHeader && (
-        <div className="master-band master-band-header" style={{ position: 'absolute' }}>
-          {fillMaster(masterHeader, pageIndex + 1)}
-        </div>
-      )}
-      {masterFooter && (
-        <div className="master-band master-band-footer" style={{ position: 'absolute' }}>
-          {fillMaster(masterFooter, pageIndex + 1)}
-        </div>
-      )}
+      {master &&
+        (['header', 'footer'] as BandSlot[]).map((slot) => {
+          const b = bandForPage(master, slot, pageIndex);
+          if (!b || !b.text.trim()) return null;
+          return (
+            <div
+              key={slot}
+              className={`master-band master-band-${slot}`}
+              style={{
+                ...masterBandBox(slot, page, margins),
+                textAlign: b.align,
+                lineHeight: `${MASTER_BAND_H}px`,
+              }}
+            >
+              {fillMasterTokens(b.text, pageIndex + 1, pageCount, docTitle)}
+            </div>
+          );
+        })}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Master-page furniture — the header/footer band, live in master view.    */
+/* ---------------------------------------------------------------------- */
+
+interface MasterBandViewProps {
+  slot: BandSlot;
+  /** Which variant this is ("Header", "Even page footer"…). */
+  label: string;
+  /** Position/size in page coordinates. */
+  box: { left: number; top: number; width: number; height: number };
+  /** Band height in px — doubles as the line-height that centres the text. */
+  bandHeight: number;
+  /** Raw band text — tokens stay visible here, the way Publisher shows fields. */
+  text: string;
+  align: MasterBand['align'];
+  placeholder: string;
+  editable: boolean;
+  onChange: (text: string) => void;
+}
+
+function MasterBandView({
+  slot,
+  label,
+  box,
+  bandHeight,
+  text,
+  align,
+  placeholder,
+  editable,
+  onChange,
+}: MasterBandViewProps) {
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  // Seeded once, then left alone: like the text frames, the live DOM is the
+  // truth while the user types (re-rendering it would kill the caret).
+  const setEl = useCallback(
+    (el: HTMLDivElement | null) => {
+      ref.current = el;
+      if (el && !el.dataset.seeded) {
+        el.textContent = text;
+        el.dataset.seeded = '1';
+      }
+    },
+    [text],
+  );
+
+  return (
+    <div
+      className={`master-band master-band-${slot} is-editable`}
+      style={{ ...box, textAlign: align, lineHeight: `${bandHeight}px` }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      {/* Publisher's non-printing guide: a dashed frame with a name tab. */}
+      <span className="master-band-guide" aria-hidden="true">
+        <span className="master-band-tag">{label}</span>
+      </span>
+      <div
+        ref={setEl}
+        className="master-band-text"
+        contentEditable={editable}
+        suppressContentEditableWarning
+        spellCheck={false}
+        data-ph={`Click to add a ${placeholder.toLowerCase()}`}
+        onInput={() => onChange(ref.current?.innerText ?? '')}
+        onKeyDown={(e) => {
+          // Enter would split the band into blocks; furniture is one line.
+          if (e.key === 'Enter') e.preventDefault();
+        }}
+        onPaste={(e) => {
+          // Never paste markup into a furniture band — it holds plain text.
+          e.preventDefault();
+          const plain = e.clipboardData.getData('text/plain').replace(/\s*\n\s*/g, ' ');
+          document.execCommand('insertText', false, plain);
+        }}
+      />
     </div>
   );
 }

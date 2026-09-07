@@ -81,9 +81,10 @@ body {
   box-shadow: 0 1px 3px rgba(60, 64, 67, 0.15), 0 4px 8px 3px rgba(60, 64, 67, 0.05);
 }
 
-/* Master-page furniture: the running head at the top of every sheet and the
-   folio near the bottom, drawn from the document's master header/footer.
-   Positioned inside each .doc-paper in paper coordinates (px at 100% zoom). */
+/* Master-page furniture: the running head and the folio.
+   Publisher puts them inside the page's top and bottom margins and spans them
+   across the full text column, so moving a margin moves the furniture too.
+   Geometry (left/top/width/height) is set inline from the live margins. */
 .master-band {
   position: absolute;
   z-index: 3;
@@ -92,20 +93,81 @@ body {
   font-family: 'Biome', 'Space Grotesk', 'Red Hat Text', sans-serif;
   color: #000;
   white-space: pre;
+  overflow: hidden;
 }
+/* The running head reads a little smaller than the folio, as in the printed
+   Bulletin. `line-height` is set inline to the band height so the text sits
+   vertically centred in its margin slot. */
 .master-band-header {
-  top: 12px;
-  left: 48px;
-  right: 48px;
-  text-align: right;
   font-size: 17px;
-  line-height: 1.2;
 }
 .master-band-footer {
-  left: 48px;
-  bottom: 40px;
   font-size: 20px;
-  line-height: 1.2;
+}
+
+/* ---- master-page view: the bands become live, boxed by non-printing guides ---- */
+.master-band.is-editable {
+  pointer-events: auto;
+  user-select: auto;
+  z-index: 6;
+}
+/* Not a flex box: `text-align` (the band's alignment) has no effect on flex
+   items. Vertical centring comes from a line-height equal to the band height,
+   set inline alongside the geometry. */
+.master-band.is-editable .master-band-text {
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+  cursor: text;
+  white-space: pre;
+  overflow: hidden;
+}
+/* Publisher's dashed non-printing guide around each band. */
+.master-band-guide {
+  position: absolute;
+  inset: -5px -8px;
+  border: 1px dashed #1a73e8;
+  border-radius: 2px;
+  opacity: 0.75;
+  pointer-events: none;
+}
+.master-band-tag {
+  position: absolute;
+  left: 0;
+  top: -16px;
+  padding: 0 4px;
+  font-family: 'Red Hat Text', system-ui, sans-serif;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 14px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: #1a73e8;
+  background: #eaf2fe;
+  border-radius: 2px;
+}
+.master-band-text:empty::before {
+  content: attr(data-ph);
+  color: #9aa4b2;
+  font-style: italic;
+}
+.master-band-text:focus {
+  background: rgba(26, 115, 232, 0.06);
+}
+
+/* In master view the publication itself is locked: Publisher greys the page
+   content so only the furniture reads as editable. */
+.page-box-layer.is-master-layer {
+  pointer-events: none;
+}
+.page-box-layer.is-master-layer .page-box {
+  opacity: 0.32;
+}
+.page-box-layer.is-master-layer .page-box-ph,
+.page-box-layer.is-master-layer .page-empty-hint {
+  opacity: 0.25;
 }
 
 /* Consistent underline across fonts. execCommand('underline') emits a bare
@@ -433,8 +495,10 @@ body {
    bottom-right corner of the last page, clear of the margins. */
 .page-tombstone {
   position: absolute;
-  right: 28px;
-  bottom: 28px;
+  /* Tucked into the very bottom-right corner, clear of the folio band above
+     it (the band now sits inside the bottom margin). */
+  right: 14px;
+  bottom: 10px;
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
@@ -546,8 +610,18 @@ body {
   .page-box-tools,
   .page-box-link-handle,
   .page-box-outline,
-  .page-empty-hint {
+  .page-empty-hint,
+  /* The dashed guides only exist on screen — Publisher never prints them. */
+  .master-band-guide {
     display: none !important;
+  }
+  /* Master view greys the page content for editing; on paper it prints normally. */
+  .page-box-layer.is-master-layer .page-box {
+    opacity: 1 !important;
+  }
+  /* The bands sit inside the margins, so they must survive the print reset. */
+  .master-band {
+    z-index: 3 !important;
   }
   .page-box.is-pour-target {
     outline: none !important;

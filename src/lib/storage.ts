@@ -22,9 +22,12 @@ export interface StoredDocument {
   boxes?: string;
   /** Show the end-of-document tombstone (small black square, last page). */
   tombstone?: boolean;
-  /** Master-page header text (tokens: @page @month @year) shown on every page. */
+  /** The master page (header/footer furniture), serialized as JSON. */
+  master?: string;
+  /** @deprecated pre-master-page header text (tokens: @page @month @year).
+      Read once and migrated into `master`; kept so old files still open. */
   masterHeader?: string;
-  /** Master-page footer text (tokens: @page @month @year) shown on every page. */
+  /** @deprecated pre-master-page footer text (tokens: @page @month @year). */
   masterFooter?: string;
 }
 

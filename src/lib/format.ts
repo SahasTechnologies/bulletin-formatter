@@ -17,9 +17,13 @@ export interface BulletinDoc {
   template?: string;
   /** Text boxes (frames) serialized as JSON, when the document uses them. */
   boxes?: string;
-  /** Master-page header text (tokens: @page @month @year). */
+  /** Show the end-of-document tombstone (small black square, last page). */
+  tombstone?: boolean;
+  /** The master page (header/footer furniture), serialized as JSON. */
+  master?: string;
+  /** Legacy pre-master-page header text (tokens: @page @month @year). */
   masterHeader?: string;
-  /** Master-page footer text (tokens: @page @month @year). */
+  /** Legacy pre-master-page footer text (tokens: @page @month @year). */
   masterFooter?: string;
 }
 
@@ -46,6 +50,8 @@ export function parseBulletin(raw: string): BulletinDoc | null {
       updatedAt: typeof data.updatedAt === 'number' ? data.updatedAt : Date.now(),
       template: typeof data.template === 'string' ? data.template : undefined,
       boxes: typeof data.boxes === 'string' ? data.boxes : undefined,
+      tombstone: data.tombstone === true,
+      master: typeof data.master === 'string' ? data.master : undefined,
       masterHeader: typeof data.masterHeader === 'string' ? data.masterHeader : undefined,
       masterFooter: typeof data.masterFooter === 'string' ? data.masterFooter : undefined,
     };

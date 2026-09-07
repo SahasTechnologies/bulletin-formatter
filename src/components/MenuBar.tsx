@@ -153,7 +153,7 @@ const MENUS: Record<string, MenuItem[]> = {
     { id: 'view.ruler', label: 'Show ruler', icon: Ruler, check: true },
     { id: 'view.toolbar', label: 'Show toolbar', icon: MenuIcon, check: true },
     'sep',
-    { id: 'view.master', label: 'Header & footer (master page)…', icon: FileText },
+    { id: 'view.master', label: 'Master page…', icon: LayoutTemplate, check: true },
     { id: 'view.fullscreen', label: 'Full screen', icon: Maximize },
   ],
   Insert: [

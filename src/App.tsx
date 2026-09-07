@@ -1,11 +1,34 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, ChevronUp, FileText, History, RotateCcw } from 'lucide-react';
+import {
+  X,
+  ChevronUp,
+  FileText,
+  History,
+  RotateCcw,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  LayoutTemplate,
+  PanelRightClose,
+} from 'lucide-react';
 import MenuBar, { menuSearchEntries } from './components/MenuBar';
 import Toolbar from './components/Toolbar';
 import DocumentCanvas from './components/DocumentCanvas';
 import HomeScreen from './components/HomeScreen';
 import { GoogleFontProvider } from './components/GoogleFontProvider';
 import * as ed from './lib/editor';
+import {
+  BAND_LABELS,
+  emptyMaster,
+  loadMaster,
+  serializeMaster,
+  withBand,
+  MASTER_TOKENS,
+  type BandKey,
+  type MasterAlign,
+  type MasterBand,
+  type MasterPage,
+} from './lib/master';
 import {
   loadRecentDocs,
   saveDoc,
@@ -36,6 +59,45 @@ function textOfHtml(html: string): string {
   const d = document.createElement('div');
   d.innerHTML = html;
   return d.textContent ?? '';
+}
+
+/** Editing keys the app must route to the editor when focus has left the page. */
+const EDITING_KEYS = new Set(['b', 'i', 'u', 'z', 'y', 'a', 'x', 'c', 'v']);
+
+/** True when the event came from somewhere that already handles those keys. */
+function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || typeof el.tagName !== 'string') return false;
+  if (el.isContentEditable) return true;
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
+}
+
+/** Copy the editor selection, or fall back to the browser's own copy. */
+async function copySelection(): Promise<void> {
+  const text = ed.selectedText();
+  if (text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      /* fall through to execCommand */
+    }
+  }
+  ed.exec('copy');
+}
+
+/** Paste plain text, falling back to the native paste. */
+async function pasteClipboard(): Promise<void> {
+  try {
+    const t = await navigator.clipboard.readText();
+    if (t) {
+      ed.exec('insertText', t);
+      return;
+    }
+  } catch {
+    /* permission denied — let execCommand try */
+  }
+  ed.exec('paste');
 }
 
 const SHORTCUTS: [string, string][] = [
@@ -91,14 +153,14 @@ export default function App() {
   const tombstoneRef = useRef(false);
   /** Right-hand panel with saved versions (File > Version history). */
   const [versionsOpen, setVersionsOpen] = useState(false);
-  /** Right-hand panel editing the master header/footer (View > Header & footer). */
+  /** View > Master page — the right-hand options panel *and* in-place editing
+      of the header/footer bands on the sheet, the way Publisher does it. */
   const [masterOpen, setMasterOpen] = useState(false);
-  /** Master-page furniture: plain text shown on every page, tokens @page,
-      @month and @year are filled in per page (page number + today's date). */
-  const [masterHeader, setMasterHeader] = useState('');
-  const [masterFooter, setMasterFooter] = useState('');
-  const masterHeaderRef = useRef('');
-  const masterFooterRef = useRef('');
+  /** The document's master page: running head + folio for every sheet. */
+  const [master, setMaster] = useState<MasterPage>(() => emptyMaster());
+  const masterRef = useRef<MasterPage>(master);
+  /** Bumped only when the panel edits band text, to re-seed the on-page bands. */
+  const [masterRev, setMasterRev] = useState(0);
 
   /** Version of the document content passed to the canvas (bump = reload). */
   const [canvasRev, setCanvasRev] = useState(0);
@@ -142,11 +204,13 @@ export default function App() {
       ...activeDocRef.current,
       content,
       updatedAt: Date.now(),
+      // Written unconditionally: these used to be guarded by a truthiness
+      // check, so switching the tombstone OFF — or clearing the running head —
+      // left the old value on disk and it came straight back on reopen.
+      tombstone: tombstoneRef.current,
+      master: serializeMaster(masterRef.current),
     };
     if (boxesRef.current) doc.boxes = boxesRef.current;
-    if (tombstoneRef.current) doc.tombstone = tombstoneRef.current;
-    if (masterHeaderRef.current) doc.masterHeader = masterHeaderRef.current;
-    if (masterFooterRef.current) doc.masterFooter = masterFooterRef.current;
     activeDocRef.current = doc;
     saveDoc(doc);
     // Automatic version snapshot (throttled by word-count drift in storage).
@@ -161,24 +225,35 @@ export default function App() {
   }, []);
 
   // Keep the tombstone + master refs in step so persistNow (stable, ref-based)
-  // always writes the current flags.
+  // always writes the current values.
   useEffect(() => {
     tombstoneRef.current = tombstone;
   }, [tombstone]);
   useEffect(() => {
-    masterHeaderRef.current = masterHeader;
-  }, [masterHeader]);
-  useEffect(() => {
-    masterFooterRef.current = masterFooter;
-  }, [masterFooter]);
+    masterRef.current = master;
+  }, [master]);
 
-  /** Debounced save of the master header/footer text. */
-  const applyMaster = useCallback((patch: { header?: string; footer?: string }) => {
-    if (patch.header !== undefined) setMasterHeader(patch.header);
-    if (patch.footer !== undefined) setMasterFooter(patch.footer);
-    if (persistTimer.current) clearTimeout(persistTimer.current);
-    persistTimer.current = setTimeout(persistNow, 400);
-  }, [persistNow]);
+  /** Edit the master page and save it on a short debounce.
+   *  `reseed` forces the on-page bands to re-render from state — set it when
+   *  the panel (not the page) changed the text. Never set it while the user is
+   *  typing on the sheet: re-seeding mid-keystroke would throw away the caret. */
+  const applyMaster = useCallback(
+    (patch: (m: MasterPage) => MasterPage, reseed = false) => {
+      setMaster(patch);
+      if (reseed) setMasterRev((r) => r + 1);
+      if (persistTimer.current) clearTimeout(persistTimer.current);
+      persistTimer.current = setTimeout(persistNow, 400);
+    },
+    [persistNow],
+  );
+
+  /** The user typed into a band on the sheet (master-page view). */
+  const handleMasterBandChange = useCallback(
+    (slot: BandKey, patch: { text: string }) => {
+      applyMaster((m) => withBand(m, slot, patch));
+    },
+    [applyMaster],
+  );
 
   /** Toggle the end-of-document tombstone and save the flag immediately. */
   const toggleTombstone = useCallback(() => {
@@ -227,11 +302,19 @@ export default function App() {
     boxesRef.current = null;
     tombstoneRef.current = false;
     setTombstone(false);
-    masterHeaderRef.current = tpl.master?.header ?? '';
-    setMasterHeader(masterHeaderRef.current);
-    masterFooterRef.current = tpl.master?.footer ?? '';
-    setMasterFooter(masterFooterRef.current);
+    // A template's running head / folio seed the master page (the old
+    // pre-master header/footer pair maps onto the default bands).
+    const seeded = loadMaster(undefined, {
+      masterHeader: tpl.master?.header,
+      masterFooter: tpl.master?.footer,
+    });
+    masterRef.current = seeded;
+    setMaster(seeded);
     setMasterOpen(false);
+    // Templates are A4 portrait — without this the page-size chip in the
+    // status bar kept whatever the previous document used.
+    setPageName('A4');
+    setLandscape(false);
     setRecentDocs(saveDoc(doc));
     setScreen('editor');
   }, []);
@@ -252,10 +335,12 @@ export default function App() {
     boxesRef.current = doc.boxes ?? null;
     tombstoneRef.current = doc.tombstone ?? false;
     setTombstone(doc.tombstone ?? false);
-    masterHeaderRef.current = doc.masterHeader ?? '';
-    setMasterHeader(masterHeaderRef.current);
-    masterFooterRef.current = doc.masterFooter ?? '';
-    setMasterFooter(masterFooterRef.current);
+    const loaded = loadMaster(doc.master, {
+      masterHeader: doc.masterHeader,
+      masterFooter: doc.masterFooter,
+    });
+    masterRef.current = loaded;
+    setMaster(loaded);
     setMasterOpen(false);
     setRecentDocs(saveDoc(refreshed));
     setScreen('editor');
@@ -310,8 +395,8 @@ export default function App() {
         updatedAt: Date.now(),
         template: activeDocRef.current?.template,
         boxes: boxesRef.current ?? undefined,
-        masterHeader: masterHeaderRef.current || undefined,
-        masterFooter: masterFooterRef.current || undefined,
+        tombstone: tombstoneRef.current || undefined,
+        master: serializeMaster(masterRef.current),
       };
       downloadBulletin(doc);
     },
@@ -342,12 +427,14 @@ export default function App() {
       setPageName(doc.page === 'Letter' ? 'Letter' : 'A4');
       docHtmlRef.current = parsed.content ?? '';
       boxesRef.current = parsed.boxes ?? null;
-      tombstoneRef.current = false;
-      setTombstone(false);
-      masterHeaderRef.current = parsed.masterHeader ?? '';
-      setMasterHeader(masterHeaderRef.current);
-      masterFooterRef.current = parsed.masterFooter ?? '';
-      setMasterFooter(masterFooterRef.current);
+      tombstoneRef.current = parsed.tombstone ?? false;
+      setTombstone(parsed.tombstone ?? false);
+      const loaded = loadMaster(parsed.master, {
+        masterHeader: parsed.masterHeader,
+        masterFooter: parsed.masterFooter,
+      });
+      masterRef.current = loaded;
+      setMaster(loaded);
       setMasterOpen(false);
       setRecentDocs(saveDoc(doc));
       setScreen('editor');
@@ -440,10 +527,12 @@ export default function App() {
               setTitle(parsed.title);
               setPageName(parsed.page === 'Letter' ? 'Letter' : 'A4');
               replaceDocContent(parsed.content, parsed.boxes);
-              masterHeaderRef.current = parsed.masterHeader ?? '';
-              setMasterHeader(masterHeaderRef.current);
-              masterFooterRef.current = parsed.masterFooter ?? '';
-              setMasterFooter(masterFooterRef.current);
+              const imported = loadMaster(parsed.master, {
+                masterHeader: parsed.masterHeader,
+                masterFooter: parsed.masterFooter,
+              });
+              masterRef.current = imported;
+              setMaster(imported);
               recalc();
               persistNow();
             };
@@ -747,6 +836,24 @@ export default function App() {
           ?.readText()
           .then((t) => ed.exec('insertText', t))
           .catch(() => window.alert('Clipboard access was blocked by the browser.'));
+      } else if (EDITING_KEYS.has(k) && !isTypingTarget(e.target)) {
+        // Bold / italic / underline / undo / redo / clipboard are advertised in
+        // the shortcut list, but the browser only honours them natively while
+        // the caret is inside the editable surface. Click a toolbar button — or
+        // any other control — and they silently did nothing. Route them to the
+        // editor ourselves; let the native handling win inside an editable.
+        e.preventDefault();
+        switch (k) {
+          case 'b': ed.exec('bold'); break;
+          case 'i': ed.exec('italic'); break;
+          case 'u': ed.exec('underline'); break;
+          case 'z': ed.exec(e.shiftKey ? 'redo' : 'undo'); break;
+          case 'y': ed.exec('redo'); break;
+          case 'a': ed.exec('selectAll'); break;
+          case 'x': ed.exec('cut'); break;
+          case 'c': void copySelection(); break;
+          case 'v': void pasteClipboard(); break;
+        }
       }
     };
     window.addEventListener('keydown', onKey);
@@ -771,8 +878,9 @@ export default function App() {
       'tools.spellcheck': spellCheck,
       'tools.prefs.autocheck': spellCheck,
       'tools.prefs.tombstone': tombstone,
+      'view.master': masterOpen,
     }),
-    [pageName, landscape, docLang, viewMode, showRuler, showToolbar, spellCheck, tombstone],
+    [pageName, landscape, docLang, viewMode, showRuler, showToolbar, spellCheck, tombstone, masterOpen],
   );
 
   const stats = docStatsState;
@@ -910,8 +1018,11 @@ export default function App() {
                 onDocChange={handleDocChange}
                 readOnly={viewMode === 'viewing'}
                 tombstone={tombstone}
-                masterHeader={masterHeader}
-                masterFooter={masterFooter}
+                master={master}
+                masterMode={masterOpen && viewMode === 'editing'}
+                masterRev={masterRev}
+                docTitle={title}
+                onMasterBandChange={handleMasterBandChange}
               />
             </div>
 
@@ -930,10 +1041,8 @@ export default function App() {
 
             {masterOpen && (
               <MasterPanel
-                header={masterHeader}
-                footer={masterFooter}
-                onHeaderChange={(h) => applyMaster({ header: h })}
-                onFooterChange={(f) => applyMaster({ footer: f })}
+                master={master}
+                onChange={applyMaster}
                 onClose={() => setMasterOpen(false)}
               />
             )}
@@ -1210,119 +1319,187 @@ function VersionPanel({
   );
 }
 
-/* ---------- View > Header & footer (master page) ---------- */
+/* ---------- View > Master page (header & footer) ---------- */
 
-const MASTER_TOKENS: { token: string; label: string }[] = [
-  { token: '@page', label: 'Page number' },
-  { token: '@month', label: 'Current month' },
-  { token: '@year', label: 'Current year' },
-];
+/** The band variants the panel shows, given the master's options. */
+function activeSlots(m: MasterPage): BandKey[] {
+  const slots: BandKey[] = ['header', 'footer'];
+  if (m.differentFirstPage) slots.push('firstHeader', 'firstFooter');
+  if (m.differentOddEven) slots.push('evenHeader', 'evenFooter');
+  return slots;
+}
 
 function MasterPanel({
-  header,
-  footer,
-  onHeaderChange,
-  onFooterChange,
+  master,
+  onChange,
   onClose,
 }: {
-  header: string;
-  footer: string;
-  onHeaderChange: (h: string) => void;
-  onFooterChange: (f: string) => void;
+  master: MasterPage;
+  /** `reseed` re-renders the on-page bands — needed when the panel (not the
+   *  page) is what changed the text, so the live band picks the edit up. */
+  onChange: (patch: (m: MasterPage) => MasterPage, reseed?: boolean) => void;
   onClose: () => void;
 }) {
-  const headerAreaRef = useRef<HTMLTextAreaElement>(null);
-  const footerAreaRef = useRef<HTMLTextAreaElement>(null);
+  const inputs = useRef<Partial<Record<BandKey, HTMLInputElement | null>>>({});
 
-  /** Insert a token at the caret of whichever field is focused. */
-  const insertToken = (token: string) => {
-    const areas = [headerAreaRef.current, footerAreaRef.current];
-    const el = areas.find((a) => a === document.activeElement) ?? headerAreaRef.current;
-    if (!el) return;
-    const value = el === headerAreaRef.current ? header : footer;
-    const at = el.selectionStart ?? value.length;
-    const next = value.slice(0, at) + token + value.slice(el.selectionEnd ?? at);
-    if (el === headerAreaRef.current) onHeaderChange(next);
-    else onFooterChange(next);
+  /** Drop a field token into a band at its caret. */
+  const insertToken = (slot: BandKey, token: string) => {
+    const el = inputs.current[slot];
+    const value = master[slot].text;
+    const at = el?.selectionStart ?? value.length;
+    const end = el?.selectionEnd ?? at;
+    const next = value.slice(0, at) + token + value.slice(end);
+    onChange((m) => withBand(m, slot, { text: next }), true);
     requestAnimationFrame(() => {
-      el.focus();
-      el.setSelectionRange(at + token.length, at + token.length);
+      el?.focus();
+      el?.setSelectionRange(at + token.length, at + token.length);
     });
   };
 
+  const setText = (slot: BandKey, text: string) =>
+    onChange((m) => withBand(m, slot, { text }), true);
+  const setAlign = (slot: BandKey, align: MasterAlign) =>
+    onChange((m) => withBand(m, slot, { align }));
+
   const field =
-    'min-h-0 w-full resize-none rounded-md border border-gdoc-border bg-white px-2.5 py-2 text-[13px] leading-relaxed outline-none focus:border-bb-400';
+    'w-full rounded-md border border-gdoc-border bg-white px-2.5 py-1.5 text-[13px] outline-none focus:border-bb-400';
 
   return (
     <aside className="no-print flex w-[350px] flex-none flex-col border-l border-gdoc-border bg-[#faf7f4]">
       <div className="flex flex-none items-center gap-2 border-b border-gdoc-border px-4 py-3">
-        <FileText size={15} className="flex-none text-bb-600" />
-        <h2 className="flex-1 text-[13px] font-semibold text-[#2b2622]">Header &amp; footer</h2>
+        <LayoutTemplate size={15} className="flex-none text-bb-600" />
+        <h2 className="flex-1 text-[13px] font-semibold text-[#2b2622]">Master page</h2>
         <button
           onClick={onClose}
-          title="Close header & footer"
-          className="rounded p-1 text-gdoc-muted hover:bg-gdoc-hover"
+          title="Close master page"
+          className="flex items-center gap-1 rounded px-1.5 py-1 text-[12px] text-gdoc-muted hover:bg-gdoc-hover"
         >
-          <X size={16} />
+          <PanelRightClose size={14} />
+          Close
         </button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
         <p className="mb-3 text-[12px] leading-relaxed text-gdoc-muted">
-          This is the document’s <span className="font-medium text-[#2b2622]">master</span>: the
-          running head and folio that print on every page, like the Bulletin’s furniture. Edit
-          them once here — every page updates. Leave a field blank to hide it.
+          The <span className="font-medium text-[#2b2622]">master</span> holds the running head and
+          folio that print on every page. Type straight into the dashed bands on the sheet, or edit
+          them below. Leave a band empty and it disappears.
         </p>
 
-        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-gdoc-muted">
-          Header (top of every page)
-        </label>
-        <textarea
-          ref={headerAreaRef}
-          value={header}
-          onChange={(e) => onHeaderChange(e.target.value)}
-          rows={2}
-          spellCheck={false}
-          placeholder="Baulko Bulletin | n+●●"
-          className={field}
-        />
-
-        <label className="mb-1 mt-3 block text-[11px] font-semibold uppercase tracking-wide text-gdoc-muted">
-          Footer (page number + date)
-        </label>
-        <textarea
-          ref={footerAreaRef}
-          value={footer}
-          onChange={(e) => onFooterChange(e.target.value)}
-          rows={2}
-          spellCheck={false}
-          placeholder="@page |  @month @year"
-          className={field}
-        />
-
-        <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] text-gdoc-muted">Insert:</span>
-          {MASTER_TOKENS.map((t) => (
-            <button
-              key={t.token}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => insertToken(t.token)}
-              title={t.label}
-              className="rounded-full border border-gdoc-border bg-white px-2.5 py-1 text-[11px] font-medium text-[#2b2622] hover:border-bb-400 hover:bg-bb-500/10"
-            >
-              {t.label} <span className="text-bb-600">{t.token}</span>
-            </button>
-          ))}
+        {/* ---- options (Publisher's Header & Footer design tab) ---- */}
+        <div className="mb-4 rounded-md border border-gdoc-border bg-white px-3 py-2">
+          <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-gdoc-muted">
+            Options
+          </h3>
+          <Check
+            label="Different first page"
+            checked={master.differentFirstPage}
+            onChange={(v) => onChange((m) => ({ ...m, differentFirstPage: v }))}
+          />
+          <Check
+            label="Different odd & even pages"
+            checked={master.differentOddEven}
+            onChange={(v) => onChange((m) => ({ ...m, differentOddEven: v }))}
+          />
+          <Check
+            label="Show on first page"
+            checked={master.showOnFirstPage}
+            onChange={(v) => onChange((m) => ({ ...m, showOnFirstPage: v }))}
+          />
         </div>
 
-        <div className="mt-4 rounded-md border border-gdoc-border bg-white px-3 py-2.5 text-[12px] leading-relaxed text-gdoc-muted">
-          <span className="font-semibold text-[#2b2622]">Tip:</span> on the page, header and footer
-          text is set in the Bulletin’s <em>Biome</em> masthead typeface, and{' '}
-          <code className="rounded bg-gdoc-hover px-1 text-[11px]">@page</code> is replaced with each
-          sheet’s page number as you add pages.
+        {/* ---- one editor per band variant ---- */}
+        {activeSlots(master).map((slot) => {
+          const b = master[slot] as MasterBand;
+          return (
+            <div key={slot} className="mb-4">
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <label className="text-[11px] font-semibold uppercase tracking-wide text-gdoc-muted">
+                  {BAND_LABELS[slot]}
+                </label>
+                <div className="flex items-center gap-0.5">
+                  {(
+                    [
+                      { a: 'left' as MasterAlign, Icon: AlignLeft, title: 'Align left' },
+                      { a: 'center' as MasterAlign, Icon: AlignCenter, title: 'Align centre' },
+                      { a: 'right' as MasterAlign, Icon: AlignRight, title: 'Align right' },
+                    ]
+                  ).map(({ a, Icon, title }) => (
+                    <button
+                      key={a}
+                      title={title}
+                      onClick={() => setAlign(slot, a)}
+                      className={`grid h-6 w-6 place-items-center rounded ${
+                        b.align === a
+                          ? 'bg-bb-500 text-white'
+                          : 'text-gdoc-muted hover:bg-gdoc-hover'
+                      }`}
+                    >
+                      <Icon size={13} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <input
+                ref={(el) => {
+                  inputs.current[slot] = el;
+                }}
+                value={b.text}
+                onChange={(e) => setText(slot, e.target.value)}
+                spellCheck={false}
+                placeholder={slot.startsWith('footer') || slot === 'footer' ? '@page |  @month @year' : 'Baulko Bulletin | n+●●'}
+                className={field}
+              />
+
+              <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                {MASTER_TOKENS.map((t) => (
+                  <button
+                    key={t.token}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => insertToken(slot, t.token)}
+                    title={`Insert ${t.label.toLowerCase()} into the ${BAND_LABELS[slot].toLowerCase()}`}
+                    className="rounded-full border border-gdoc-border bg-white px-2 py-0.5 text-[10.5px] font-medium text-[#2b2622] hover:border-bb-400 hover:bg-bb-500/10"
+                  >
+                    {t.label} <span className="text-bb-600">{t.token}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+
+        <div className="rounded-md border border-gdoc-border bg-white px-3 py-2.5 text-[12px] leading-relaxed text-gdoc-muted">
+          <span className="font-semibold text-[#2b2622]">Fields</span> resolve per page:{' '}
+          <code className="rounded bg-gdoc-hover px-1 text-[11px]">@page</code> becomes each sheet’s
+          number, <code className="rounded bg-gdoc-hover px-1 text-[11px]">@pages</code> the page
+          count. The bands sit inside the page margins, so dragging a margin moves them too.
         </div>
       </div>
     </aside>
+  );
+}
+
+/** Small labelled checkbox used by the master options block. */
+function Check({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2 py-1 text-[12.5px] text-[#2b2622]">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="h-3.5 w-3.5 accent-bb-500"
+      />
+      {label}
+    </label>
   );
 }
 
