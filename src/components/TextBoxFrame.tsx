@@ -216,7 +216,7 @@ export default function TextBoxFrame({
           columnCount: cols,
           columnGap: cols > 1 ? FRAME_COL_GAP : undefined,
           columnRule: cols > 1 ? '1px solid #d8d2ca' : undefined,
-          columnFill: 'auto',
+          columnFill: 'balance',
         }}
       />
 

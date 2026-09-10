@@ -134,6 +134,9 @@ interface DocumentCanvasProps {
   master?: MasterPage;
   /** Master-page view: the furniture is editable in place, the page is not. */
   masterMode?: boolean;
+  /** Fired when a master band receives focus, so the Master Pages ribbon
+      knows where to drop Insert Page Number / Date / Time. */
+  onMasterBandFocus?: (slot: BandKey) => void;
   /** Bumped when the master's text was changed off-page, to re-seed the bands. */
   masterRev?: number;
   /** Document title, for the @title field token. */
@@ -498,6 +501,7 @@ export default function DocumentCanvas({
   masterRev = 0,
   docTitle = '',
   onMasterBandChange,
+  onMasterBandFocus,
 }: DocumentCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // An absent master renders nothing rather than crashing the canvas.
@@ -1344,11 +1348,12 @@ export default function DocumentCanvas({
   return (
     <div className="doc-wrap flex min-h-0 w-full">
       <PageSidebar
-        pageCount={pageCount}
+        pageCount={masterMode ? sheets.length : pageCount}
         pageW={page.width}
         pageH={page.height}
-        activePage={Math.min(activePageUi, pageCount - 1)}
+        activePage={Math.min(activePageUi, (masterMode ? sheets.length : pageCount) - 1)}
         readOnly={readOnly}
+        masterMode={masterMode}
         onSelectPage={selectPage}
         onAddPage={addPage}
         onDeletePage={deletePage}
@@ -1451,6 +1456,12 @@ export default function DocumentCanvas({
                 transformOrigin: 'top center',
               }}
             >
+              {/* Publisher tabs each master sheet in the corner: PAGE A / B. */}
+              {masterMode && (
+                <span className="master-sheet-label" aria-hidden="true">
+                  Page {String.fromCharCode(65 + pageIndex)}
+                </span>
+              )}
               <div
                 className={`page-box-layer relative h-full w-full ${pourSourceId ? 'is-pouring' : ''} ${
                   masterMode ? 'is-master-layer' : ''
@@ -1539,6 +1550,7 @@ export default function DocumentCanvas({
                       placeholder={slot === 'header' ? 'Header' : 'Footer'}
                       editable={!readOnly}
                       onChange={(text) => onMasterBandChange?.(key, { text })}
+                      onFocusBand={() => onMasterBandFocus?.(key)}
                     />
                   );
                 }
@@ -1802,6 +1814,8 @@ interface MasterBandViewProps {
   placeholder: string;
   editable: boolean;
   onChange: (text: string) => void;
+  /** The band took focus — lets App target Insert Page Number/Date/Time. */
+  onFocusBand?: () => void;
 }
 
 function MasterBandView({
@@ -1814,6 +1828,7 @@ function MasterBandView({
   placeholder,
   editable,
   onChange,
+  onFocusBand,
 }: MasterBandViewProps) {
   const ref = useRef<HTMLDivElement | null>(null);
 
@@ -1847,6 +1862,7 @@ function MasterBandView({
         suppressContentEditableWarning
         spellCheck={false}
         data-ph={`Click to add a ${placeholder.toLowerCase()}`}
+        onFocus={() => onFocusBand?.()}
         onInput={() => onChange(ref.current?.innerText ?? '')}
         onKeyDown={(e) => {
           // Enter would split the band into blocks; furniture is one line.
@@ -2086,7 +2102,7 @@ function TextBoxView({
           // Newspaper rule: a gray hairline down the middle of a multi-column
           // box (accent-color of the existing borders).
           columnRule: cols > 1 ? `1px solid ${COLUMN_RULE_COLOR}` : undefined,
-          columnFill: 'auto',
+          columnFill: 'balance',
         }}
       />
 

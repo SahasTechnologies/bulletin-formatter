@@ -3,18 +3,19 @@
  * so it can be edited independently (drop new HTML in, add an entry below).
  * The files are imported with Vite's `?raw` suffix, which loads them as plain
  * strings.
+ *
+ * Every template here is a Baulko Bulletin page. The typography follows
+ * **Design Bible 2.0**: page titles 48pt Franklin Gothic Heavy (#3f3f3f),
+ * body 13pt Roboto Condensed (#262626 — never pure black), bylines Arial 18pt
+ * (#808080), artwork credits Aparajita 18pt italic (#999999), pull-quotes
+ * Corbel 24pt italic and precursory notes Times New Roman 13pt italic.
  */
 import blank from './blank.html?raw';
-import projectProposal from './project-proposal.html?raw';
-import essay from './essay.html?raw';
-import reportSimple from './report-simple.html?raw';
-import reportLuxe from './report-luxe.html?raw';
-import reportMla from './report-mla.html?raw';
-import bookReport from './book-report.html?raw';
 import bulletinCover from './bulletin-cover.html?raw';
 import bulletinEditorial from './bulletin-editorial.html?raw';
 import bulletinContents from './bulletin-contents.html?raw';
 import bulletinArticle from './bulletin-article.html?raw';
+import bulletinContinuation from './bulletin-continuation.html?raw';
 import bulletinPuzzle from './bulletin-puzzle.html?raw';
 import bulletinPoem from './bulletin-poem.html?raw';
 import bulletinGraphic from './bulletin-graphic.html?raw';
@@ -30,77 +31,47 @@ export interface Template {
   /** Default master-page furniture: running head + folio shown on every page.
       Supports the @page / @month / @year tokens. */
   master?: { header: string; footer: string };
+  /** Frame model for the template. When `frame.columns` > 1, the template
+      opens as a single text box set to that many columns (so the Columns
+      toolbar reports the right number and a real `column-rule` is drawn
+      between the columns). The Home-screen thumbnail honours the same
+      column count so the preview matches the opened document. */
+  frame?: { columns: number };
 }
+
+/** The running head + folio every bulletin page carries (Design Bible §Set up:
+    "Baulko Bulletin | n+#" in Biome 18, folio "page | Month Year"). */
+const ISSUE_MASTER = {
+  header: 'Baulko Bulletin | n+●●',
+  footer: '@page |  @month @year',
+};
 
 export const TEMPLATES: Template[] = [
   {
     id: 'blank',
-    name: 'Blank document',
-    subtitle: 'Blank',
-    blurb: 'Start from a clean page',
+    name: 'Blank page',
+    subtitle: 'Bulletin',
+    blurb: 'An empty bulletin page with the issue running head and folio',
     content: blank,
+    master: ISSUE_MASTER,
   },
-  {
-    id: 'project-proposal',
-    name: 'Project proposal',
-    subtitle: 'Tropic',
-    blurb: 'A structured proposal with a title block and sections',
-    content: projectProposal,
-  },
-  {
-    id: 'essay',
-    name: 'Essay',
-    subtitle: 'Paperback',
-    blurb: 'A classic five-paragraph essay skeleton',
-    content: essay,
-  },
-  {
-    id: 'report-simple',
-    name: 'Report',
-    subtitle: 'Simple',
-    blurb: 'A clean science-lab-style report',
-    content: reportSimple,
-  },
-  {
-    id: 'report-luxe',
-    name: 'Report',
-    subtitle: 'Luxe',
-    blurb: 'A bold cover-page style report',
-    content: reportLuxe,
-  },
-  {
-    id: 'report-mla',
-    name: 'Report',
-    subtitle: 'MLA',
-    blurb: 'A title page with formal MLA formatting',
-    content: reportMla,
-  },
-  {
-    id: 'book-report',
-    name: 'Book report',
-    subtitle: 'by Reading Rainbow',
-    blurb: 'A title page ready for a favourite book',
-    content: bookReport,
-  },
-  // Official bulletin page types, recreated from the published Baulko Bulletin
-  // issues (WIPD × Spectrums 2026; n+32, June 2026) — the same fonts, sizes,
-  // colours and layout, but with placeholder copy you can edit and empty
-  // click-to-add image frames instead of embedded artwork.
+  // One template per page of the Design Bible, in the order an issue runs:
+  // cover → editorial → contents → articles → … → end page.
   {
     id: 'bulletin-cover',
     name: 'Bulletin',
-    subtitle: 'Issue cover',
+    subtitle: 'Title page',
     blurb: 'Cover with the official running head and a click-to-add artwork frame',
     content: bulletinCover,
-    master: { header: "Baulko Bulletin – Spectrums | WIPD 2026 |", footer: '@page |  @month @year' },
+    master: ISSUE_MASTER,
   },
   {
     id: 'bulletin-editorial',
     name: 'Bulletin',
-    subtitle: 'Editorial letter',
+    subtitle: 'Editorial',
     blurb: 'The editor’s welcome letter page, in the official editorial style',
     content: bulletinEditorial,
-    master: { header: "Baulko Bulletin – Spectrums | WIPD 2026 |", footer: '@page |  @month @year' },
+    master: ISSUE_MASTER,
   },
   {
     id: 'bulletin-contents',
@@ -108,15 +79,26 @@ export const TEMPLATES: Template[] = [
     subtitle: 'Page of contents',
     blurb: 'The issue’s two-column contents list in official style',
     content: bulletinContents,
-    master: { header: "Baulko Bulletin – Spectrums | WIPD 2026 |", footer: '@page |  @month @year' },
+    master: ISSUE_MASTER,
+    frame: { columns: 2 },
   },
   {
     id: 'bulletin-article',
     name: 'Bulletin',
-    subtitle: 'Feature article',
-    blurb: 'Two-column feature article with headline, byline and photo frame',
+    subtitle: 'Article',
+    blurb: 'Two-column feature article: 48pt headline, byline, drop cap, pull-quote',
     content: bulletinArticle,
-    master: { header: "Baulko Bulletin – Spectrums | WIPD 2026 |", footer: '@page |  @month @year' },
+    master: ISSUE_MASTER,
+    frame: { columns: 2 },
+  },
+  {
+    id: 'bulletin-continuation',
+    name: 'Bulletin',
+    subtitle: 'Article continuation',
+    blurb: 'The overflow page a long article runs onto — no headline, just the text',
+    content: bulletinContinuation,
+    master: ISSUE_MASTER,
+    frame: { columns: 2 },
   },
   {
     id: 'bulletin-puzzle',
@@ -124,23 +106,24 @@ export const TEMPLATES: Template[] = [
     subtitle: 'Puzzle',
     blurb: 'Puzzle page with title, byline, instructions and a grid art frame',
     content: bulletinPuzzle,
-    master: { header: "Baulko Bulletin – Spectrums | WIPD 2026 |", footer: '@page |  @month @year' },
+    master: ISSUE_MASTER,
   },
   {
     id: 'bulletin-poem',
     name: 'Bulletin',
     subtitle: 'Poem',
-    blurb: 'Handwritten Indie Flower poem page in official layout',
+    blurb: 'Single-column poem page — columns matter, so the shape is kept',
     content: bulletinPoem,
-    master: { header: "Baulko Bulletin – Spectrums | WIPD 2026 |", footer: '@page |  @month @year' },
+    master: ISSUE_MASTER,
+    frame: { columns: 1 },
   },
   {
     id: 'bulletin-graphic',
     name: 'Bulletin',
-    subtitle: 'Graphic page',
+    subtitle: 'Graphic',
     blurb: 'Artwork page with title, byline and a click-to-add art frame',
     content: bulletinGraphic,
-    master: { header: "Baulko Bulletin – Spectrums | WIPD 2026 |", footer: '@page |  @month @year' },
+    master: ISSUE_MASTER,
   },
   {
     id: 'bulletin-endpage',
@@ -148,7 +131,7 @@ export const TEMPLATES: Template[] = [
     subtitle: 'End page',
     blurb: 'Thank-you message, classroom/website cards and the full credits',
     content: bulletinEndpage,
-    master: { header: "Baulko Bulletin – Spectrums | WIPD 2026 |", footer: '@page |  @month @year' },
+    master: ISSUE_MASTER,
   },
 ];
 

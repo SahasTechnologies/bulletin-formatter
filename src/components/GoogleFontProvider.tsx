@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo } from 'react';
+import { createContext, useContext, useEffect, useMemo } from 'react';
 import { GOOGLE_FONT_FAMILIES } from '../data/googleFonts';
 
 interface GoogleFontCtx {
@@ -13,6 +13,17 @@ const Ctx = createContext<GoogleFontCtx | null>(null);
 
 // Set of names we know are Google Fonts (lower-cased comparison).
 const GFSET = new Set(GOOGLE_FONT_FAMILIES.map((f) => f.toLowerCase()));
+
+// Module-level bridge so non-React code (template bootstrap, the "open a
+// template" callback) can preload Google Fonts without going through React
+// context. GoogleFontProvider registers the API on mount.
+let _api: GoogleFontCtx | null = null;
+export function loadGoogleFont(family: string): void {
+  if (_api && _api.isGoogleFont(family)) _api.loadFont(family);
+}
+export function isGoogleFont(family: string): boolean {
+  return _api?.isGoogleFont(family) ?? GFSET.has(family.toLowerCase());
+}
 
 export function GoogleFontProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<GoogleFontCtx>(() => {
@@ -44,6 +55,14 @@ export function GoogleFontProvider({ children }: { children: React.ReactNode }) 
       },
     };
   }, []);
+
+  // Expose the API to non-React callers (template preloader, etc.).
+  useEffect(() => {
+    _api = value;
+    return () => {
+      if (_api === value) _api = null;
+    };
+  }, [value]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -15,7 +15,8 @@ import MenuBar, { menuSearchEntries } from './components/MenuBar';
 import Toolbar from './components/Toolbar';
 import DocumentCanvas from './components/DocumentCanvas';
 import HomeScreen from './components/HomeScreen';
-import { GoogleFontProvider } from './components/GoogleFontProvider';
+import { GoogleFontProvider, isGoogleFont, loadGoogleFont } from './components/GoogleFontProvider';
+import MasterSection from './components/MasterSection';
 import * as ed from './lib/editor';
 import {
   BAND_LABELS,
@@ -53,6 +54,62 @@ const PAGE_SIZES = {
 } as const;
 
 type PageSizeName = keyof typeof PAGE_SIZES;
+
+/** CSS generic font keywords (and the bare web-safe families) that appear at
+    the tail of `font-family` stacks — never useful to "load". */
+const GENERIC_FONT_KEYWORDS = new Set([
+  'serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui',
+  'ui-serif', 'ui-sans-serif', 'ui-monospace', 'ui-rounded', 'math', 'emoji',
+  'fangsong', 'inherit', 'initial', 'unset', 'revert', 'revert-layer',
+  'redhattext', // the app's chrome font, always locally available
+]);
+
+/** Walk an HTML string, pick out every `font-family:` stack, and preload the
+    Google Fonts we find. The Home-screen thumbnail and the live template both
+    need the typeface before the first paint, and the font provider is
+    normally only poked on hover/select by the toolbar. */
+function preloadTemplateFonts(html: string): void {
+  const re = /font-family\s*:\s*([^;"]+)/gi;
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    for (const raw of m[1].split(',')) {
+      const name = raw.trim().replace(/^['"]|['"]$/g, '').trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (GENERIC_FONT_KEYWORDS.has(key)) continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (isGoogleFont(name)) loadGoogleFont(name);
+    }
+  }
+}
+
+/** A4 portrait with the app's default 96/80 margins — the canvas size every
+    bulletin template is laid out for. */
+const TEMPLATE_PAGE = { width: 794, height: 1123 };
+const TEMPLATE_MARGIN_X = 96;
+const TEMPLATE_MARGIN_Y = 80;
+
+/** Wrap a template's HTML in a single full-content-area text box so the
+    Columns toolbar reports the template's real column count and a
+    `column-rule` is drawn between the columns. Stored as the document's
+    `boxes` JSON; DocumentCanvas.buildModel honours it (multi-column frames
+    bypass the "coarse single box → re-split" legacy path). */
+export function templateFrameBoxes(html: string, columns: number): string {
+  const box = {
+    id: `tpl-${Date.now().toString(36)}`,
+    pageIndex: 0,
+    x: TEMPLATE_MARGIN_X,
+    y: TEMPLATE_MARGIN_Y,
+    w: TEMPLATE_PAGE.width - TEMPLATE_MARGIN_X * 2,
+    h: TEMPLATE_PAGE.height - TEMPLATE_MARGIN_Y * 2,
+    html,
+    columns,
+    nextId: null,
+  };
+  return JSON.stringify([box]);
+}
 
 /** Plain text of a snippet of HTML (used for word counts and exports). */
 function textOfHtml(html: string): string {
@@ -161,6 +218,8 @@ export default function App() {
   const masterRef = useRef<MasterPage>(master);
   /** Bumped only when the panel edits band text, to re-seed the on-page bands. */
   const [masterRev, setMasterRev] = useState(0);
+  /** Band last focused on the sheet — target for the ribbon's Insert field. */
+  const focusedBandRef = useRef<BandKey>('header');
 
   /** Version of the document content passed to the canvas (bump = reload). */
   const [canvasRev, setCanvasRev] = useState(0);
@@ -255,6 +314,26 @@ export default function App() {
     [applyMaster],
   );
 
+  /** Which band the user last clicked, so the Master Pages ribbon's Insert
+      Page Number / Date / Time buttons know where to drop the token. */
+  const handleMasterBandFocus = useCallback((slot: BandKey) => {
+    focusedBandRef.current = slot;
+  }, []);
+
+  /** Append a field token to the focused band (or the header by default) and
+      re-seed the band so the raw `@page` shows up on the sheet. */
+  const handleInsertToken = useCallback(
+    (token: string) => {
+      const slot: BandKey = focusedBandRef.current ?? 'header';
+      applyMaster((m) => withBand(m, slot, { text: `${m[slot].text}${token}` }), true);
+    },
+    [applyMaster],
+  );
+
+  const toggleHeaderFooter = useCallback(() => {
+    applyMaster((m) => ({ ...m, bandsVisible: !(m.bandsVisible !== false) }), true);
+  }, [applyMaster]);
+
   /** Toggle the end-of-document tombstone and save the flag immediately. */
   const toggleTombstone = useCallback(() => {
     const next = !tombstoneRef.current;
@@ -286,6 +365,15 @@ export default function App() {
   /** Open a template as a brand-new document. */
   const openTemplate = useCallback((tpl: Template) => {
     const now = Date.now();
+    // Multi-column templates open as one full-page frame carrying the real
+    // column count, so the Columns toolbar and the column rule agree with the
+    // thumbnail the user just clicked.
+    const boxesJson = tpl.frame?.columns
+      ? templateFrameBoxes(tpl.content, tpl.frame.columns)
+      : null;
+    // Warm the Google Fonts cache before the canvas mounts — otherwise script
+    // faces pop in a beat late and the first paint falls back to a default.
+    preloadTemplateFonts(tpl.content);
     const doc: StoredDocument = {
       id: newDocId(),
       title: tpl.name,
@@ -294,12 +382,13 @@ export default function App() {
       createdAt: now,
       page: 'A4',
       template: tpl.id,
+      boxes: boxesJson ?? undefined,
     };
     activeDocRef.current = doc;
     setActiveDoc(doc);
     setTitle(doc.title);
     docHtmlRef.current = tpl.content;
-    boxesRef.current = null;
+    boxesRef.current = boxesJson;
     tombstoneRef.current = false;
     setTombstone(false);
     // A template's running head / folio seed the master page (the old
@@ -1002,7 +1091,23 @@ export default function App() {
           )}
 
           <div className="flex min-h-0 w-full flex-1">
-            <div className="flex min-w-0 flex-1">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              {/* Publisher's Master Pages ribbon — only while View > Master
+                  Page is on, and it sits above the sheet it edits. */}
+              {masterOpen && viewMode === 'editing' && (
+                <MasterSection
+                  master={master}
+                  onChange={applyMaster}
+                  onInsertToken={handleInsertToken}
+                  onClose={() => {
+                    setMasterOpen(false);
+                    focusedBandRef.current = 'header';
+                  }}
+                  headerFooterVisible={master.bandsVisible !== false}
+                  onToggleHeaderFooter={toggleHeaderFooter}
+                />
+              )}
+              <div className="flex min-h-0 min-w-0 flex-1">
               <DocumentCanvas
                 key={activeDoc?.id ?? 'new'}
                 zoom={zoom}
@@ -1023,7 +1128,9 @@ export default function App() {
                 masterRev={masterRev}
                 docTitle={title}
                 onMasterBandChange={handleMasterBandChange}
+                onMasterBandFocus={handleMasterBandFocus}
               />
+              </div>
             </div>
 
             {versionsOpen && (

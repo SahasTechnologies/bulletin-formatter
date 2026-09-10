@@ -1,6 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { Copy, Plus, Trash2 } from 'lucide-react';
 
+/** Publisher labels its master sheets with letters: A, B, C… */
+function masterLabel(i: number): string {
+  return String.fromCharCode(65 + (i % 26));
+}
+
 interface PageSidebarProps {
   pageCount: number;
   pageW: number;
@@ -18,6 +23,9 @@ interface PageSidebarProps {
    */
   renderPage: (i: number) => React.ReactNode;
   thumbWidth?: number;
+  /** View > Master page: show the master sheets (letter-labelled) instead of
+      the document's pages, and drop the add/duplicate/delete controls. */
+  masterMode?: boolean;
 }
 
 export default function PageSidebar({
@@ -32,6 +40,7 @@ export default function PageSidebar({
   onDuplicatePage,
   renderPage,
   thumbWidth = 132,
+  masterMode = false,
 }: PageSidebarProps) {
   const activeRef = useRef<HTMLButtonElement>(null);
 
@@ -48,9 +57,9 @@ export default function PageSidebar({
     <div className="no-print flex w-[176px] flex-none flex-col border-r border-gdoc-border bg-[#faf7f4]">
       <div className="flex items-center justify-between px-3 py-2">
         <span className="text-[11px] font-semibold uppercase tracking-wider text-gdoc-muted">
-          Pages
+          {masterMode ? 'Master Pages' : 'Pages'}
         </span>
-        {!readOnly && (
+        {!readOnly && !masterMode && (
           <button
             onClick={onAddPage}
             title="Add page"
@@ -75,10 +84,12 @@ export default function PageSidebar({
                       ? 'bg-bb-500/15 ring-2 ring-bb-500'
                       : 'hover:bg-bb-200/40 ring-1 ring-gdoc-border'
                   }`}
-                  title={`Go to page ${i + 1}`}
+                  title={masterMode ? `Master sheet ${masterLabel(i)}` : `Go to page ${i + 1}`}
                 >
                   <div
-                    className="relative overflow-hidden rounded-[2px] bg-white"
+                    className={`relative overflow-hidden rounded-[2px] ${
+                      masterMode ? 'bg-[#fef4e9] ring-1 ring-bb-400/60' : 'bg-white'
+                    }`}
                     style={{ width: thumbWidth, height: thumbHeight }}
                   >
                     <div
@@ -97,11 +108,11 @@ export default function PageSidebar({
 
                 <div className="mt-1 flex items-center justify-between px-0.5">
                   <span
-                    className={`text-[11px] ${active ? 'font-semibold text-bb-700' : 'text-gdoc-muted'}`}
-                  >
-                    Page {i + 1}
-                  </span>
-                  {!readOnly && (
+                      className={`text-[11px] ${active ? 'font-semibold text-bb-700' : 'text-gdoc-muted'}`}
+                    >
+                      {masterMode ? `Page ${masterLabel(i)}` : `Page ${i + 1}`}
+                    </span>
+                  {!readOnly && !masterMode && (
                     <span className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
                       <button
                         onClick={() => onDuplicatePage(i)}
@@ -128,7 +139,7 @@ export default function PageSidebar({
         </div>
       </div>
 
-      {!readOnly && (
+      {!readOnly && !masterMode && (
         <button
           onClick={onAddPage}
           className="flex items-center justify-center gap-1.5 border-t border-gdoc-border py-2 text-[12px] font-medium text-gdoc-muted transition-colors hover:bg-bb-200/40 hover:text-bb-700"

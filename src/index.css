@@ -81,6 +81,29 @@ body {
   box-shadow: 0 1px 3px rgba(60, 64, 67, 0.15), 0 4px 8px 3px rgba(60, 64, 67, 0.05);
 }
 
+/* View > Master page: Publisher draws the master sheet on cream stock with a
+   dashed non-printing frame, and tabs it in the corner (PAGE A / PAGE B). */
+.doc-paper.is-master {
+  background: #fef4e9;
+  outline: 2px dashed #fe9c53;
+  outline-offset: 6px;
+}
+.master-sheet-label {
+  position: absolute;
+  left: 0;
+  top: -26px;
+  z-index: 4;
+  padding: 2px 10px;
+  border-radius: 4px 4px 0 0;
+  background: #fe9c53;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 /* Master-page furniture: the running head and the folio.
    Publisher puts them inside the page's top and bottom margins and spans them
    across the full text column, so moving a margin moves the furniture too.
@@ -618,6 +641,14 @@ body {
   /* Master view greys the page content for editing; on paper it prints normally. */
   .page-box-layer.is-master-layer .page-box {
     opacity: 1 !important;
+  }
+  /* Master-view chrome is editing furniture only — never printed. */
+  .doc-paper.is-master {
+    background: #fff !important;
+    outline: none !important;
+  }
+  .master-sheet-label {
+    display: none !important;
   }
   /* The bands sit inside the margins, so they must survive the print reset. */
   .master-band {

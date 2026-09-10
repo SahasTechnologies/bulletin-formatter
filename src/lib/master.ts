@@ -40,6 +40,9 @@ export interface MasterPage {
   evenFooter: MasterBand;
   /** With this off, page 1 carries no header/footer at all. */
   showOnFirstPage: boolean;
+  /** Global "Show Header/Footer" toggle (Publisher's Header & Footer group).
+      When false, no page prints any band. */
+  bandsVisible: boolean;
 }
 
 /** Tokens offered by the master panel's "Insert field" row. */
@@ -71,6 +74,7 @@ export function emptyMaster(): MasterPage {
     evenHeader: band('', 'right'),
     evenFooter: band('', 'left'),
     showOnFirstPage: true,
+    bandsVisible: true,
   };
 }
 
@@ -112,6 +116,7 @@ export function normalizeMaster(
     base.differentFirstPage = r.differentFirstPage === true;
     base.differentOddEven = r.differentOddEven === true;
     base.showOnFirstPage = r.showOnFirstPage !== false;
+    base.bandsVisible = r.bandsVisible !== false;
     return base;
   }
   if (legacy?.masterHeader || legacy?.masterFooter) {
@@ -171,6 +176,7 @@ export function bandForPage(
   slot: BandSlot,
   pageIndex: number,
 ): MasterBand | null {
+  if (m.bandsVisible === false) return null;
   if (pageIndex === 0) {
     if (!m.showOnFirstPage) return null;
     if (m.differentFirstPage) return slot === 'header' ? m.firstHeader : m.firstFooter;
