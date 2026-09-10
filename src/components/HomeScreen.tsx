@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FileText, Search, MoreVertical, Trash2, Upload, X } from 'lucide-react';
+import { FileText, Search, MoreVertical, Trash2, Upload, X, BookOpen, FileStack } from 'lucide-react';
 import { TEMPLATES, type Template } from '../data/templates';
 import type { StoredDocument } from '../lib/storage';
 import { fuzzyMatchFields, type FieldedMatch } from '../lib/fuzzy';
@@ -10,6 +10,10 @@ interface HomeScreenProps {
   onOpenRecent: (doc: StoredDocument) => void;
   onDeleteRecent: (id: string) => void;
   onImportFile: (file: File) => void;
+  /** Merge several .bulletin files into one issue. */
+  onMergeFiles: (files: File[]) => void;
+  /** Open the Design Bible picker at /guide. */
+  onOpenGuide: () => void;
 }
 
 /** One row of the search dropdown. */
@@ -90,11 +94,14 @@ export default function HomeScreen({
   onOpenRecent,
   onDeleteRecent,
   onImportFile,
+  onMergeFiles,
+  onOpenGuide,
 }: HomeScreenProps) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
+  const mergeRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -261,6 +268,36 @@ export default function HomeScreen({
             </div>
           )}
         </div>
+
+        <button
+          className="flex flex-none items-center gap-1.5 rounded px-2 py-1.5 text-[13px] text-gdoc-muted hover:bg-gdoc-hover"
+          onClick={onOpenGuide}
+          title="Open the Design Bible picker"
+        >
+          <BookOpen size={18} />
+          <span>Guide</span>
+        </button>
+
+        <button
+          className="flex flex-none items-center gap-1.5 rounded px-2 py-1.5 text-[13px] text-gdoc-muted hover:bg-gdoc-hover"
+          onClick={() => mergeRef.current?.click()}
+          title="Merge several .bulletin files into one issue"
+        >
+          <FileStack size={18} />
+          <span>Merge</span>
+        </button>
+        <input
+          ref={mergeRef}
+          type="file"
+          accept=".bulletin,.json,application/json"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            const picked = Array.from(e.target.files ?? []);
+            if (picked.length) onMergeFiles(picked);
+            e.target.value = '';
+          }}
+        />
 
         <button
           className="flex flex-none items-center gap-1.5 rounded px-2 py-1.5 text-[13px] text-gdoc-muted hover:bg-gdoc-hover"

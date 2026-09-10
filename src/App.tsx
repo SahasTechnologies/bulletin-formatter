@@ -17,6 +17,12 @@ import DocumentCanvas from './components/DocumentCanvas';
 import HomeScreen from './components/HomeScreen';
 import { GoogleFontProvider, isGoogleFont, loadGoogleFont } from './components/GoogleFontProvider';
 import MasterSection from './components/MasterSection';
+import GuideScreen from './components/GuideScreen';
+import MergeDialog from './components/MergeDialog';
+import { navigate, usePath } from './lib/router';
+import { mergeIssue, type MergeResult } from './lib/merge';
+import { splitIntoBoxes, DEFAULT_MARGINS } from './components/DocumentCanvas';
+import { GUIDE_PAGES, type GuidePage } from './data/designGuide';
 import * as ed from './lib/editor';
 import {
   BAND_LABELS,
@@ -39,7 +45,7 @@ import {
   recordVersion,
   type StoredDocument,
 } from './lib/storage';
-import { type Template } from './data/templates';
+import { getTemplate, type Template } from './data/templates';
 import {
   downloadBulletin,
   downloadHtml,
@@ -180,6 +186,10 @@ type DialogKind = null | 'about' | 'shortcuts' | 'wordcount' | 'search' | 'detai
 
 export default function App() {
   const [screen, setScreen] = useState<'home' | 'editor'>('home');
+  /** Files queued for the Merge dialog (null = dialog closed). */
+  const [mergeFiles, setMergeFiles] = useState<File[] | null>(null);
+  /** Current URL path — the only route is `/guide`. */
+  const path = usePath();
 
   const [title, setTitle] = useState('Untitled bulletin');
   const [starred, setStarred] = useState(false);
@@ -469,6 +479,105 @@ export default function App() {
     setVersionsOpen(false);
     setScreen('home');
   }, [persistNow]);
+
+  /**
+   * Add a page to the issue that is already open. Existing frames are kept —
+   * the new page lands on a fresh sheet after the last one.
+   */
+  const appendTemplatePage = useCallback(
+    (tpl: Template) => {
+      const base = activeDocRef.current;
+      if (!base) return;
+      let list: Array<Record<string, unknown>> = [];
+      if (boxesRef.current) {
+        try {
+          const parsed = JSON.parse(boxesRef.current);
+          if (Array.isArray(parsed)) list = parsed;
+        } catch {
+          list = [];
+        }
+      }
+      // A document saved before the box model has none — split its HTML so
+      // the pages already there survive alongside the new one.
+      if (!list.length) {
+        list = splitIntoBoxes(
+          docHtmlRef.current,
+          TEMPLATE_PAGE,
+          DEFAULT_MARGINS,
+        ) as unknown as Array<Record<string, unknown>>;
+      }
+      const lastPage = list.reduce((max, b) => Math.max(max, Number(b.pageIndex ?? 0)), 0);
+      list.push({
+        id: `tpl-${Date.now().toString(36)}-${list.length}`,
+        pageIndex: lastPage + 1,
+        x: TEMPLATE_MARGIN_X,
+        y: TEMPLATE_MARGIN_Y,
+        w: TEMPLATE_PAGE.width - TEMPLATE_MARGIN_X * 2,
+        h: TEMPLATE_PAGE.height - TEMPLATE_MARGIN_Y * 2,
+        html: tpl.content,
+        columns: tpl.frame?.columns ?? 1,
+        nextId: null,
+      });
+      preloadTemplateFonts(tpl.content);
+      replaceDocContent(
+        `${docHtmlRef.current}<div style="page-break-after:always"></div>${tpl.content}`,
+        JSON.stringify(list),
+      );
+      recalc();
+    },
+    [replaceDocContent, recalc],
+  );
+
+  /**
+   * `/guide`: pick a part of the issue and start editing it. With a document
+   * already open the page is appended to that issue; otherwise it opens as a
+   * new document.
+   */
+  const applyGuidePage = useCallback(
+    (page: GuidePage) => {
+      const tpl = page.templateId ? getTemplate(page.templateId) : undefined;
+      if (!tpl) return;
+      if (screen === 'editor' && activeDocRef.current) appendTemplatePage(tpl);
+      else openTemplate(tpl);
+      navigate('/');
+    },
+    [appendTemplatePage, openTemplate, screen],
+  );
+
+  /** Open the merged issue as a new document. */
+  const handleMergeDone = useCallback((result: MergeResult) => {
+    const now = Date.now();
+    const doc: StoredDocument = {
+      id: newDocId(),
+      title: result.title,
+      content: result.content,
+      boxes: result.boxes,
+      updatedAt: now,
+      createdAt: now,
+      page: 'A4',
+      template: 'bulletin-contents',
+    };
+    activeDocRef.current = doc;
+    setActiveDoc(doc);
+    setTitle(doc.title);
+    docHtmlRef.current = result.content;
+    boxesRef.current = result.boxes;
+    // A finished issue carries the end-of-document tombstone.
+    tombstoneRef.current = true;
+    setTombstone(true);
+    const seeded = loadMaster(undefined, {
+      masterHeader: 'Baulko Bulletin | n+●●',
+      masterFooter: '@page |  @month @year',
+    });
+    masterRef.current = seeded;
+    setMaster(seeded);
+    setPageName('A4');
+    setLandscape(false);
+    setRecentDocs(saveDoc(doc));
+    setMergeFiles(null);
+    setScreen('editor');
+    navigate('/');
+  }, []);
 
   /** Export the document in the proprietary `.bulletin` format. */
   const exportBulletin = useCallback(
@@ -981,13 +1090,22 @@ export default function App() {
 
   return (
     <GoogleFontProvider>
-      {screen === 'home' ? (
+      {path === '/guide' ? (
+        <GuideScreen
+          pages={GUIDE_PAGES}
+          hasOpenDoc={screen === 'editor' && !!activeDoc}
+          onEdit={applyGuidePage}
+          onBack={() => navigate('/')}
+        />
+      ) : screen === 'home' ? (
         <HomeScreen
           recentDocs={recentDocs}
           onOpenTemplate={openTemplate}
           onOpenRecent={openRecent}
           onDeleteRecent={deleteRecent}
           onImportFile={importFile}
+          onMergeFiles={(files) => setMergeFiles(files)}
+          onOpenGuide={() => navigate('/guide')}
         />
       ) : (
         <div className="flex h-full w-full flex-col bg-gdoc-bg font-ui text-[#2b2622]">
@@ -1240,6 +1358,13 @@ export default function App() {
             </Dialog>
           )}
         </div>
+      )}
+      {mergeFiles && (
+        <MergeDialog
+          files={mergeFiles}
+          onCancel={() => setMergeFiles(null)}
+          onMerge={handleMergeDone}
+        />
       )}
     </GoogleFontProvider>
   );

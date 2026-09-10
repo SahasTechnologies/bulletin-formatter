@@ -44,7 +44,7 @@ const COLUMN_RULE_COLOR = '#d8d2ca';
 /** Pixels of movement before a click on a selected box turns into a drag. */
 const DRAG_THRESHOLD = 3;
 
-const DEFAULT_MARGINS = { left: 96, right: 96, top: 80, bottom: 80 };
+export const DEFAULT_MARGINS = { left: 96, right: 96, top: 80, bottom: 80 };
 
 /**
  * Where a header/footer band sits on the sheet.
@@ -238,7 +238,7 @@ function collectLeaves(root: Element, out: HTMLElement[]): void {
  * margin column, and they flow onto extra pages when they no longer fit.
  * Pure spacing elements (empty paragraphs) are dropped.
  */
-function splitIntoBoxes(
+export function splitIntoBoxes(
   content: string,
   page: { width: number; height: number },
   margins: typeof DEFAULT_MARGINS,
