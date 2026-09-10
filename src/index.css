@@ -8,25 +8,205 @@ body,
   height: 100%;
 }
 
-/* Biome — the Bulletin masthead typeface. Not on Google Fonts, so it ships
-   with the app (public/fonts/biome.ttf) and any element that names it picks
-   the bundled copy up automatically. */
+/* ---------------------------------------------------------------------------
+   House typefaces — the four families the Design Bible names that are not on
+   Google Fonts: Biome, Franklin Gothic (all weights and styles), Aparajita and
+   Dreaming Outloud Script.
+
+   Every rule prefers `local(...)`, so a copy installed on the machine (which
+   is also what Microsoft 365 apps use) wins and no font is downloaded at all.
+   The bundled file in public/fonts is the fallback for a machine that does not
+   have it — that is how these stay selectable in the font dropdown offline.
+
+   Keep these in step with LOCAL_FONTS in src/data/localFonts.ts.
+   --------------------------------------------------------------------------- */
+
+/* Biome — the Bulletin masthead / running-head typeface. */
 @font-face {
   font-family: 'Biome';
-  src: url('/fonts/biome.ttf') format('truetype');
+  src: local('Biome'), url('/fonts/biome.ttf') format('truetype');
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 
-/* Dreaming Outloud Script Pro — the Bulletin's handwritten 'Thank You for
-   Reading' headline typeface (also a Microsoft 365 cloud font). Bundled the
-   same way as Biome so it needs no internet. */
+/* Dreaming Outloud Script — the end page's 'Thank You for Reading' script.
+   Also installed as 'Dreaming Outloud Script Pro' (its full family name), so
+   both spellings resolve to the same file. */
 @font-face {
-  font-family: 'Dreaming Outloud Script Pro';
-  src: url('/fonts/dreaming-outloud-script-pro.ttf') format('truetype');
+  font-family: 'Dreaming Outloud Script';
+  src:
+    local('Dreaming Outloud Script'),
+    local('Dreaming Outloud Script Pro'),
+    url('/fonts/dreaming-outloud-script-pro.ttf') format('truetype');
   font-weight: 400;
   font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Dreaming Outloud Script Pro';
+  src:
+    local('Dreaming Outloud Script Pro'),
+    local('Dreaming Outloud Script'),
+    url('/fonts/dreaming-outloud-script-pro.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Franklin Gothic — the Bulletin's headline family, in every weight and style
+   Windows ships (Book / Medium / Demi / Heavy, each with an italic). */
+@font-face {
+  font-family: 'Franklin Gothic';
+  src: local('Franklin Gothic Book'), url('/fonts/franklin-gothic-book.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Franklin Gothic';
+  src: local('Franklin Gothic Book Italic'), url('/fonts/franklin-gothic-book-italic.ttf')
+    format('truetype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Franklin Gothic';
+  src: local('Franklin Gothic Medium'), url('/fonts/franklin-gothic-medium.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Franklin Gothic';
+  src: local('Franklin Gothic Medium Italic'), url('/fonts/franklin-gothic-medium-italic.ttf')
+    format('truetype');
+  font-weight: 500;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Franklin Gothic';
+  src: local('Franklin Gothic Demi'), url('/fonts/franklin-gothic-demi.ttf') format('truetype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Franklin Gothic';
+  src: local('Franklin Gothic Demi Italic'), url('/fonts/franklin-gothic-demi-italic.ttf')
+    format('truetype');
+  font-weight: 600;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Franklin Gothic';
+  src: local('Franklin Gothic Heavy'), url('/fonts/franklin-gothic-heavy.ttf') format('truetype');
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Franklin Gothic';
+  src: local('Franklin Gothic Heavy Italic'), url('/fonts/franklin-gothic-heavy-italic.ttf')
+    format('truetype');
+  font-weight: 800;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* …and the same faces under the style names Publisher and the Design Bible
+   use, so a template that says 'Franklin Gothic Heavy' just works. */
+@font-face {
+  font-family: 'Franklin Gothic Book';
+  src: local('Franklin Gothic Book'), url('/fonts/franklin-gothic-book.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Franklin Gothic Book';
+  src: local('Franklin Gothic Book Italic'), url('/fonts/franklin-gothic-book-italic.ttf')
+    format('truetype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Franklin Gothic Medium';
+  src: local('Franklin Gothic Medium'), url('/fonts/franklin-gothic-medium.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Franklin Gothic Medium';
+  src: local('Franklin Gothic Medium Italic'), url('/fonts/franklin-gothic-medium-italic.ttf')
+    format('truetype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Franklin Gothic Demi';
+  src: local('Franklin Gothic Demi'), url('/fonts/franklin-gothic-demi.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Franklin Gothic Demi';
+  src: local('Franklin Gothic Demi Italic'), url('/fonts/franklin-gothic-demi-italic.ttf')
+    format('truetype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Franklin Gothic Heavy';
+  src: local('Franklin Gothic Heavy'), url('/fonts/franklin-gothic-heavy.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Franklin Gothic Heavy';
+  src: local('Franklin Gothic Heavy Italic'), url('/fonts/franklin-gothic-heavy-italic.ttf')
+    format('truetype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* Aparajita — the italic the Bulletin credits artwork in. */
+@font-face {
+  font-family: 'Aparajita';
+  src: local('Aparajita'), url('/fonts/aparajita.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Aparajita';
+  src: local('Aparajita Italic'), url('/fonts/aparajita-italic.ttf') format('truetype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Aparajita';
+  src: local('Aparajita Bold'), url('/fonts/aparajita-bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Aparajita';
+  src: local('Aparajita Bold Italic'), url('/fonts/aparajita-bold-italic.ttf') format('truetype');
+  font-weight: 700;
+  font-style: italic;
   font-display: swap;
 }
 

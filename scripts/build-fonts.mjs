@@ -45,6 +45,10 @@ export interface GoogleFont {
 export const GOOGLE_FONTS: GoogleFont[] = ${JSON.stringify(cleaned, null, 2)};
 
 export const GOOGLE_FONT_FAMILIES: string[] = GOOGLE_FONTS.map(f => f.family);
+
+/** Locally bundled / locally installed fonts. Hand-written in
+    \`./localFonts.ts\` so regenerating this file does not lose them. */
+export { LOCAL_FONTS } from './localFonts';
 `;
 
 writeFileSync(resolve(ROOT, 'src/data/googleFonts.ts'), out, 'utf-8');

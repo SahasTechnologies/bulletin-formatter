@@ -39,7 +39,8 @@ import {
   ALargeSmall,
   Newspaper,
 } from 'lucide-react';
-import { GOOGLE_FONTS, LOCAL_FONTS } from '../data/googleFonts';
+import { GOOGLE_FONTS } from '../data/googleFonts';
+import { LOCAL_FONTS } from '../data/localFonts';
 import { useGoogleFont } from './GoogleFontProvider';
 import * as ed from '../lib/editor';
 

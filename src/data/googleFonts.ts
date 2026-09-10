@@ -7794,18 +7794,8 @@ export const GOOGLE_FONTS: GoogleFont[] = [
   }
 ];
 
-/** Locally bundled fonts (not on Google Fonts) — see public/fonts. These sit
-    at the top of the font picker and load from /fonts/*.ttf via @font-face,
-    so they always render — even fully offline. */
-export const LOCAL_FONTS: GoogleFont[] = [
-  {
-    "family": "Biome",
-    "category": "display"
-  },
-  {
-    "family": "Dreaming Outloud Script Pro",
-    "category": "handwriting"
-  }
-];
+/** Locally bundled / locally installed fonts. Hand-written in
+    `./localFonts.ts` so regenerating this file does not lose them. */
+export { LOCAL_FONTS } from './localFonts';
 
 export const GOOGLE_FONT_FAMILIES: string[] = GOOGLE_FONTS.map(f => f.family);

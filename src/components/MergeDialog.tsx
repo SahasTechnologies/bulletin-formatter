@@ -51,6 +51,9 @@ export default function MergeDialog({
     setInputs((list) => (list ? list.filter((_, k) => k !== i) : list));
 
   const ready = (inputs?.length ?? 0) > 0;
+  /** A contents page is only generated when the import did not bring one. */
+  const importedContents = (inputs ?? []).some((i) => i.kind === 'contents');
+  const willGenerateContents = makeContents && !importedContents;
 
   const preview = useMemo(() => {
     if (!inputs?.length) return null;
@@ -159,9 +162,14 @@ export default function MergeDialog({
 
               {preview && (
                 <p className="mt-3 rounded bg-[#faf7f4] px-3 py-2 text-[12px] text-gdoc-muted">
-                  Result: {preview.entries.length} listed page
+                  Result: {preview.entries.length} page
                   {preview.entries.length === 1 ? '' : 's'}
-                  {makeContents ? ' plus a generated contents page' : ''}.
+                  {willGenerateContents
+                    ? ', plus a generated page of contents'
+                    : importedContents
+                      ? ' — using the contents page you imported'
+                      : ''}
+                  .
                 </p>
               )}
             </>
