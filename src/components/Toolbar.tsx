@@ -86,11 +86,33 @@ const GAP = 6; // px between controls (gap-1.5)
 // slide into the horizontal ⋮ strip when the window is too narrow.
 const ALL_KEYS = [
   'find', 'undo', 'redo', 'print', 'spell', 'zoom', 'style', 'font', 'size',
-  'bold', 'italic', 'underline', 'textColor', 'highlight', 'minus', 'plus',
+  'bold', 'italic', 'underline', 'textColor', 'highlight',
   'link', 'image', 'alignL', 'alignC', 'alignR', 'alignJ', 'bullet', 'number',
   'indentDec', 'indentInc', 'lineSpacing', 'master',
 ] as const;
 type ItemKey = (typeof ALL_KEYS)[number];
+
+/**
+ * Which controls form one visual group. A hairline divider is drawn on the
+ * leading edge of every group, so the eye reads "these belong together" —
+ * in particular the font cluster (font name → size → B/I/U/colour) is fenced
+ * off from the paragraph tools. Keys that share a number are separated by a
+ * gap only.
+ */
+const GROUPS: Record<ItemKey, number> = {
+  find: 1, undo: 1, redo: 1, print: 1, spell: 1, // document & view
+  zoom: 2,
+  style: 3,
+  font: 4,
+  size: 5, // − [pt] + — one unit
+  bold: 6, italic: 6, underline: 6, textColor: 6, highlight: 6, // character
+  link: 7, image: 7, // insert
+  alignL: 8, alignC: 8, alignR: 8, alignJ: 8, // paragraph
+  bullet: 9, number: 9,
+  indentDec: 10, indentInc: 10,
+  lineSpacing: 11,
+  master: 12, // page furniture
+};
 
 const ESSENTIALS = new Set<ItemKey>([
   'find', 'undo', 'redo', 'print', 'spell', 'zoom', 'style', 'font', 'size',
@@ -298,6 +320,25 @@ export default function Toolbar(props: ToolbarProps) {
     }, 100);
   };
 
+  /**
+   * The −/+ steppers walk the FONT_SIZES ladder rather than nudging by 1pt, so
+   * every step lands on a value the size dropdown can tick. Sizes that are not
+   * on the ladder (a template may set 13pt) move by 1pt so the first press is
+   * never a surprise jump. At either end of the ladder the button does nothing,
+   * matching the zoom control's clamp behaviour.
+   */
+  const stepSize = (dir: -1 | 1) => {
+    if (!FONT_SIZES.includes(size)) {
+      applySize(Math.min(400, Math.max(6, size + dir)));
+      return;
+    }
+    const next =
+      dir === 1
+        ? FONT_SIZES.find((s) => s > size)
+        : [...FONT_SIZES].reverse().find((s) => s < size);
+    if (next !== undefined) applySize(next);
+  };
+
   const applyStyle = (s: (typeof PARAGRAPH_STYLES)[number]) => {
     ed.formatBlock(s.tag);
     setStyle(s.label);
@@ -452,11 +493,41 @@ export default function Toolbar(props: ToolbarProps) {
           </Dropdown>
         );
       case 'size':
-        return <Dropdown open={o('size')} softOpen onOpenChange={(v) => setOpen(v ? 'size' : null)} title="Font size" label={iconOnly ? <ALargeSmall size={18} /> : <span className="text-[13px]">{size}</span>} width={92}>{renderSizePanel()}</Dropdown>;
-      case 'minus':
-        return <ToolBtn title="Decrease font size" onClick={() => applySize(Math.max(6, size - 1))}><Minus size={15} /></ToolBtn>;
-      case 'plus':
-        return <ToolBtn title="Increase font size" onClick={() => applySize(Math.min(400, size + 1))}><Plus size={15} /></ToolBtn>;
+        /* − [11 ▾] + reads as one control: the two steppers walk the size
+           ladder, the boxed number opens the full list. */
+        return (
+          <div className="flex h-8 flex-none items-center gap-0.5">
+            <button
+              type="button"
+              title="Decrease font size"
+              onMouseDown={keepSelection}
+              onClick={() => stepSize(-1)}
+              className="grid h-7 w-6 flex-none place-items-center rounded-md text-bb-900 transition-colors hover:bg-bb-200/60"
+            >
+              <Minus size={15} />
+            </button>
+            <Dropdown
+              open={o('size')}
+              softOpen
+              boxed
+              onOpenChange={(v) => setOpen(v ? 'size' : null)}
+              title="Font size"
+              label={iconOnly ? <ALargeSmall size={17} /> : <span className="text-[13px] tabular-nums">{size}</span>}
+              width={92}
+            >
+              {renderSizePanel()}
+            </Dropdown>
+            <button
+              type="button"
+              title="Increase font size"
+              onMouseDown={keepSelection}
+              onClick={() => stepSize(1)}
+              className="grid h-7 w-6 flex-none place-items-center rounded-md text-bb-900 transition-colors hover:bg-bb-200/60"
+            >
+              <Plus size={15} />
+            </button>
+          </div>
+        );
       case 'bold':
         return <ToolBtn title="Bold (Ctrl + B)" active={ed.queryState('bold')} onClick={() => ed.exec('bold')}><Bold size={18} /></ToolBtn>;
       case 'italic':
@@ -506,13 +577,33 @@ export default function Toolbar(props: ToolbarProps) {
     }
   };
 
-  const wrapped = (key: ItemKey, node: React.ReactNode) => (
-    <div key={key} data-item={key} data-essential={ESSENTIALS.has(key) ? 'true' : undefined} className="flex-none">
+  /**
+   * `divider` draws the hairline that fences off a group.
+   *
+   * It is a left border on the wrapper rather than a separate separator element
+   * for two reasons: the measuring pass then counts the line in `offsetWidth`
+   * (a standalone `<div>` would add width the fit calculation never sees, and
+   * the pill would spill past its rounded edge), and it costs 1px instead of
+   * ~9px. That matters — at 1440px the row is within ~20px of full, so padded
+   * dividers push the last controls into the ⋮ strip. The row's own `gap-1.5`
+   * supplies the space either side of the line.
+   */
+  const wrapped = (key: ItemKey, node: React.ReactNode, divider = false) => (
+    <div
+      key={key}
+      data-item={key}
+      data-essential={ESSENTIALS.has(key) ? 'true' : undefined}
+      className={`flex-none ${divider ? 'border-l border-bb-300' : ''}`}
+    >
       {node}
     </div>
   );
 
+  /** The controls that fit in the pill, and which of them open a new group. */
+  const inlineKeys = ALL_KEYS.filter((k) => !touch.has(k));
   const collapsedKeys = ALL_KEYS.filter((k) => touch.has(k));
+  const startsGroup = (keys: readonly ItemKey[], i: number) =>
+    i > 0 && GROUPS[keys[i]] !== GROUPS[keys[i - 1]];
 
   /* -------- overflow strip: scroll affordances --------
      The strip hides its scrollbar (rounded pill look), so fade the leading
@@ -567,7 +658,7 @@ export default function Toolbar(props: ToolbarProps) {
       >
         {/* Inline pill row — one icon high, never wraps. */}
         <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 overflow-visible">
-          {ALL_KEYS.filter((k) => !touch.has(k)).map((k) => wrapped(k, trigger(k)))}
+          {inlineKeys.map((k, i) => wrapped(k, trigger(k), startsGroup(inlineKeys, i)))}
         </div>
 
         <div className="flex-none pl-2" />
@@ -610,7 +701,7 @@ export default function Toolbar(props: ToolbarProps) {
         aria-hidden
         className="pointer-events-none absolute left-0 top-0 flex w-max flex-nowrap items-center gap-1.5 opacity-0"
       >
-        {ALL_KEYS.map((k) => wrapped(k, trigger(k, true)))}
+        {ALL_KEYS.map((k, i) => wrapped(k, trigger(k, true), startsGroup(ALL_KEYS, i)))}
       </div>
 
     </div>
@@ -742,6 +833,7 @@ function Dropdown({
   width = 200,
   title,
   softOpen,
+  boxed,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -753,6 +845,9 @@ function Dropdown({
    *  fill. Use for menu-toppers (font, paragraph style, size) that just open a
    *  panel rather than acting as a toggled state. */
   softOpen?: boolean;
+  /** Draw the trigger as a bordered field instead of a bare button. Used by the
+   *  font-size stepper, where the number sits in its own box between − and +. */
+  boxed?: boolean;
 }) {
   const btnRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -798,12 +893,18 @@ function Dropdown({
         title={title}
         onMouseDown={keepSelection}
         onClick={() => onOpenChange(!open)}
-        className={`flex h-8 items-center justify-center gap-1 rounded-md px-2 transition-colors hover:bg-bb-200/60 ${
-          open ? (softOpen ? 'bg-bb-200/60' : 'bg-bb-500 text-white') : ''
-        }`}
+        className={
+          boxed
+            ? `flex h-7 min-w-[46px] items-center justify-center gap-1 rounded-md border bg-white px-1.5 text-bb-900 transition-colors ${
+                open ? 'border-bb-400' : 'border-bb-200'
+              } hover:border-bb-300`
+            : `flex h-8 items-center justify-center gap-1 rounded-md px-2 transition-colors hover:bg-bb-200/60 ${
+                open ? (softOpen ? 'bg-bb-200/60' : 'bg-bb-500 text-white') : ''
+              }`
+        }
       >
         {label}
-        <ChevronDown size={14} className="flex-none" />
+        <ChevronDown size={boxed ? 12 : 14} className="flex-none" />
       </button>
       {open && pos &&
         createPortal(
