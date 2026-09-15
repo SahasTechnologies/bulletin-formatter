@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
   Star,
+  BookOpen,
   FilePlus,
   FolderOpen,
   Copy,
@@ -45,11 +46,9 @@ import {
   History,
   Eye,
   Columns3,
-  Languages,
   LayoutTemplate,
   MoveVertical,
   Link2,
-  MessageSquarePlus,
   Sigma,
   Type as TypeIcon,
   Pilcrow,
@@ -72,6 +71,7 @@ import {
   Trash2,
   Info as InfoIcon,
   Square,
+  Layers,
 } from 'lucide-react';
 
 export interface MenuSearchEntry {
@@ -82,18 +82,85 @@ export interface MenuSearchEntry {
 }
 
 type MenuItem =
-  | { id: string; label: string; icon?: LucideIcon; shortcut?: string; check?: boolean; gridPicker?: boolean }
+  | {
+      id: string;
+      label: string;
+      icon?: LucideIcon;
+      shortcut?: string;
+      check?: boolean;
+      gridPicker?: boolean;
+      /** Opens the character grid instead of firing `id` on click. */
+      charPanel?: SymSection[];
+    }
   | { label: string; icon?: LucideIcon; sub: MenuItem[] }
   | 'sep';
 
-const SYM_EMOJI = [
-  '😀', '😂', '🙂', '😉', '😍', '🤔', '😎', '🥳', '😴', '🤩',
-  '👍', '👎', '👏', '🙌', '🤝', '✌️', '💪', '🫶', '🙏', '🤞',
-  '❤️', '🧡', '💛', '💚', '💙', '💜', '🔥', '✨', '⭐', '💯',
+/** One titled block of the Insert ▸ Symbols & emoji grid. */
+export interface SymSection {
+  title: string;
+  chars: { ch: string; name: string }[];
+}
+
+const sym = (pairs: [string, string][]): { ch: string; name: string }[] =>
+  pairs.map(([ch, name]) => ({ ch, name }));
+
+/**
+ * The symbol/emoji palette. This is one flat, scrollable grid rather than
+ * four nested submenus: a submenu rendered inside a scrolling submenu is
+ * clipped by that parent's overflow box (which is exactly why the old
+ * "Symbols & emoji" fly-out vanished the moment you moved onto it).
+ */
+const SYM_SECTIONS: SymSection[] = [
+  {
+    title: 'Emoji',
+    chars: sym([
+      ['😀', 'Grinning face'], ['😂', 'Face with tears of joy'], ['🙂', 'Slightly smiling face'],
+      ['😉', 'Winking face'], ['😍', 'Smiling face with heart-eyes'], ['🤔', 'Thinking face'],
+      ['😎', 'Smiling face with sunglasses'], ['🥳', 'Partying face'], ['😴', 'Sleeping face'],
+      ['🤩', 'Star-struck'], ['👍', 'Thumbs up'], ['👎', 'Thumbs down'],
+      ['👏', 'Clapping hands'], ['🙌', 'Raising hands'], ['🤝', 'Handshake'],
+      ['✌️', 'Victory hand'], ['💪', 'Flexed biceps'], ['🫶', 'Heart hands'],
+      ['🙏', 'Folded hands'], ['🤞', 'Crossed fingers'], ['❤️', 'Red heart'],
+      ['🧡', 'Orange heart'], ['💛', 'Yellow heart'], ['💚', 'Green heart'],
+      ['💙', 'Blue heart'], ['💜', 'Purple heart'], ['🔥', 'Fire'],
+      ['✨', 'Sparkles'], ['⭐', 'Star'], ['💯', 'Hundred points'],
+    ]),
+  },
+  {
+    title: 'Maths',
+    chars: sym([
+      ['±', 'Plus-minus'], ['×', 'Multiplication sign'], ['÷', 'Division sign'],
+      ['≠', 'Not equal to'], ['≈', 'Approximately equal'], ['≤', 'Less than or equal'],
+      ['≥', 'Greater than or equal'], ['∞', 'Infinity'], ['∑', 'Summation'],
+      ['∏', 'Product'], ['√', 'Square root'], ['∫', 'Integral'],
+      ['∂', 'Partial differential'], ['π', 'Pi'], ['µ', 'Micro sign'],
+      ['Ω', 'Omega'], ['°', 'Degree sign'], ['′', 'Prime'],
+      ['″', 'Double prime'], ['∅', 'Empty set'],
+    ]),
+  },
+  {
+    title: 'Arrows',
+    chars: sym([
+      ['←', 'Left arrow'], ['→', 'Right arrow'], ['↑', 'Up arrow'],
+      ['↓', 'Down arrow'], ['↔', 'Left-right arrow'], ['↕', 'Up-down arrow'],
+      ['⇐', 'Double left arrow'], ['⇒', 'Double right arrow'], ['⇔', 'Double left-right arrow'],
+      ['➔', 'Heavy right arrow'], ['➜', 'Round-tipped right arrow'], ['↺', 'Anticlockwise arrow'],
+      ['↻', 'Clockwise arrow'], ['⤴', 'Arrow curving up'], ['⤵', 'Arrow curving down'],
+    ]),
+  },
+  {
+    title: 'Miscellaneous',
+    chars: sym([
+      ['©', 'Copyright'], ['®', 'Registered'], ['™', 'Trademark'],
+      ['§', 'Section sign'], ['¶', 'Pilcrow'], ['†', 'Dagger'],
+      ['‡', 'Double dagger'], ['•', 'Bullet'], ['‰', 'Per mille'],
+      ['№', 'Numero sign'], ['☀', 'Sun'], ['☁', 'Cloud'],
+      ['☂', 'Umbrella'], ['★', 'Filled star'], ['☆', 'Hollow star'],
+      ['☐', 'Ballot box'], ['☑', 'Checked box'], ['✓', 'Check mark'],
+      ['✗', 'Ballot cross'],
+    ]),
+  },
 ];
-const SYM_MATH = ['±', '×', '÷', '≠', '≈', '≤', '≥', '∞', '∑', '∏', '√', '∫', '∂', 'π', 'µ', 'Ω', '°', '′', '″', '∅'];
-const SYM_ARROWS = ['←', '→', '↑', '↓', '↔', '↕', '⇐', '⇒', '⇔', '➔', '➜', '↺', '↻', '⤴', '⤵'];
-const SYM_MISC = ['©', '®', '™', '§', '¶', '†', '‡', '•', '‰', '№', '☀', '☁', '☂', '★', '☆', '☐', '☑', '✓', '✗'];
 
 const MENUS: Record<string, MenuItem[]> = {
   File: [
@@ -101,10 +168,9 @@ const MENUS: Record<string, MenuItem[]> = {
     { id: 'file.open', label: 'Open…', icon: FolderOpen, shortcut: 'Ctrl+O' },
     'sep',
     { id: 'file.copy', label: 'Make a copy', icon: Copy },
-    { id: 'file.share', label: 'Share', icon: ClipboardCopy, sub: [
-      { id: 'file.share.copylink', label: 'Copy link to clipboard', icon: Link2 },
-      { id: 'file.share.mailto', label: 'Attach to an email', icon: ClipboardPaste },
-    ] },
+    // A bulletin is a self-contained file on this device - there is nothing to
+    // "share" and no server to hand a link to, so the File menu offers the one
+    // honest verb: Download.
     { id: 'file.download', label: 'Download', icon: Download, sub: [
       { id: 'file.download.bulletin', label: 'Bulletin (.bulletin)', icon: Download },
       { id: 'file.download.html', label: 'Web page (.html)', icon: FileCode },
@@ -154,21 +220,25 @@ const MENUS: Record<string, MenuItem[]> = {
     { id: 'view.toolbar', label: 'Show toolbar', icon: MenuIcon, check: true },
     'sep',
     { id: 'view.master', label: 'Master page…', icon: LayoutTemplate, check: true },
+    { id: 'view.layers', label: 'Layers panel', icon: Layers, check: true },
     { id: 'view.fullscreen', label: 'Full screen', icon: Maximize },
   ],
   Insert: [
     { id: 'insert.textbox', label: 'Text box', icon: TypeIcon },
     { id: 'insert.image', label: 'Image…', icon: ImageIcon },
     { id: 'insert.table', label: 'Table', icon: Table, gridPicker: true },
-    { id: 'insert.symbol', label: 'Symbols & emoji', icon: Sigma, sub: [
-      { label: 'Emojis', icon: MessageSquarePlus, sub: SYM_EMOJI.map((ch) => ({ id: `insert.char.${ch}`, label: ch })) },
-      { label: 'Maths', sub: SYM_MATH.map((ch) => ({ id: `insert.char.${ch}`, label: ch })) },
-      { label: 'Arrows', sub: SYM_ARROWS.map((ch) => ({ id: `insert.char.${ch}`, label: ch })) },
-      { label: 'Miscellaneous', sub: SYM_MISC.map((ch) => ({ id: `insert.char.${ch}`, label: ch })) },
-    ] },
+    { id: 'insert.symbol', label: 'Symbols & emoji', icon: Sigma, charPanel: SYM_SECTIONS },
     { id: 'insert.link', label: 'Link', icon: Link2, shortcut: 'Ctrl+K' },
     'sep',
-    { id: 'insert.rule', label: 'Horizontal line', icon: Minus },
+    // Shapes and lines are page *objects* (like a picture): they move, resize
+    // and recolour on their own. Horizontal line, by contrast, drops a rule
+    // into the text at the caret.
+    { id: 'insert.shape', label: 'Shape', icon: Square },
+    { id: 'insert.line', label: 'Line', icon: Minus },
+    { id: 'insert.rule', label: 'Horizontal line in text', icon: Minus },
+    // The end-of-piece marker is an object too: it is placed (never dragged)
+    // and it always paints above the page content.
+    { id: 'insert.tombstone', label: 'Tombstone', icon: Square },
     { id: 'insert.pagebreak', label: 'Break', icon: ScissorsLineDashed, sub: [
       { id: 'insert.pagebreak', label: 'Page break', icon: ScissorsLineDashed },
       { id: 'insert.columnbreak', label: 'Column break', icon: Columns3 },
@@ -243,26 +313,34 @@ const MENUS: Record<string, MenuItem[]> = {
     { id: 'format.h4', label: 'Heading 4', icon: Heading4 },
     { id: 'format.quote', label: 'Quote', icon: TextQuote },
     'sep',
+    { label: 'Order', icon: Layers, sub: [
+      { id: 'order.front', label: 'Bring to front', shortcut: 'Ctrl+Shift+]' },
+      { id: 'order.forward', label: 'Bring forward', shortcut: 'Ctrl+]' },
+      { id: 'order.backward', label: 'Send backward', shortcut: 'Ctrl+[' },
+      { id: 'order.back', label: 'Send to back', shortcut: 'Ctrl+Shift+[' },
+    ] },
+    'sep',
+    { id: 'format.tombstone', label: 'Tombstone (end of a piece)', icon: Square },
     { id: 'format.clear', label: 'Clear formatting', icon: Eraser, shortcut: 'Ctrl+\\' },
   ],
   Tools: [
     { id: 'tools.spellcheck', label: 'Spelling and grammar', icon: SpellCheck, check: true },
     { id: 'tools.wordcount', label: 'Word count', icon: Hash, shortcut: 'Ctrl+Shift+C' },
-    { id: 'tools.dictionary', label: 'Dictionary', icon: Baseline, shortcut: 'Ctrl+Shift+Y' },
-    { id: 'tools.translate', label: 'Translate document', icon: Languages },
+    { id: 'tools.dictionary', label: 'Dictionary (online lookup)', icon: Baseline, shortcut: 'Ctrl+Shift+Y' },
     'sep',
     { id: 'tools.preferences', label: 'Preferences', icon: Pencil, sub: [
       { id: 'tools.prefs.autocheck', label: 'Automatic spellcheck', icon: SpellCheck, check: true },
-      { id: 'tools.prefs.tombstone', label: 'End-of-document marker (tombstone)', icon: Square, check: true },
-    ] },
-    { id: 'tools.accessibility', label: 'Accessibility', icon: Info, sub: [
-      { id: 'tools.access.screenreader', label: 'Screen reader support (large zoom)', icon: Maximize },
+      { id: 'tools.prefs.tombstone', label: 'End-of-piece marker (tombstone) on this page', icon: Square },
     ] },
   ],
   Help: [
     { id: 'help.search', label: 'Search the menus', icon: Search, shortcut: 'Alt+/' },
     { id: 'help.shortcuts', label: 'Keyboard shortcuts', icon: Keyboard, shortcut: 'Ctrl+/' },
     'sep',
+    // The guide is where a page gets finished, so it is reachable from inside
+    // the document - not only from the home screen - and the finished page can
+    // be saved and sent to the Formatter Master from its last step.
+    { id: 'help.guide', label: 'Design guide', icon: BookOpen },
     { id: 'help.about', label: 'About Bulletin Formatter', icon: Info },
   ],
 };
@@ -314,7 +392,31 @@ export default function MenuBar({
   const [openPath, setOpenPath] = useState<string[]>([]); // submenu key path
   const [grid, setGrid] = useState(false); // table grid picker
   const [gridSize, setGridSize] = useState({ r: 0, c: 0 });
+  const [symbols, setSymbols] = useState(false); // symbols & emoji palette
   const barRef = useRef<HTMLDivElement>(null);
+  /**
+   * Hover intent for fly-out submenus.
+   *
+   * Closing a submenu the instant the pointer leaves its row makes the menu
+   * feel broken: crossing the 2px gap to the fly-out (or drifting a pixel
+   * down onto the next row) made the whole submenu disappear. So leaving a
+   * row only *schedules* the close; re-entering the row or its fly-out
+   * cancels it.
+   */
+  const closeTimer = useRef<number | null>(null);
+  const cancelClose = () => {
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  };
+  const scheduleClose = (key: string) => {
+    cancelClose();
+    closeTimer.current = window.setTimeout(() => {
+      closeTimer.current = null;
+      setOpenPath((p) => p.filter((k) => !k.startsWith(key)));
+    }, 260);
+  };
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -322,6 +424,7 @@ export default function MenuBar({
         setOpenMenu(null);
         setOpenPath([]);
         setGrid(false);
+        setSymbols(false);
       }
     };
     const onEsc = (e: KeyboardEvent) => {
@@ -329,6 +432,7 @@ export default function MenuBar({
         setOpenMenu(null);
         setOpenPath([]);
         setGrid(false);
+        setSymbols(false);
       }
     };
     window.addEventListener('mousedown', onDown);
@@ -339,10 +443,14 @@ export default function MenuBar({
     };
   }, []);
 
+  useEffect(() => cancelClose, []);
+
   const closeAll = () => {
+    cancelClose();
     setOpenMenu(null);
     setOpenPath([]);
     setGrid(false);
+    setSymbols(false);
   };
 
   const fire = (id: string) => {
@@ -360,12 +468,19 @@ export default function MenuBar({
           const key = `${keyPrefix}/${item.label}`;
           const open = openPath.includes(key);
           return (
-            <div key={key} className="relative">
+            <div
+              key={key}
+              className="relative"
+              onMouseEnter={cancelClose}
+              onMouseLeave={() => scheduleClose(key)}
+            >
               <button
-                onClick={() =>
-                  setOpenPath(open ? openPath.filter((k) => k !== key) : [...openPath, key])
-                }
+                onClick={() => {
+                  cancelClose();
+                  setOpenPath(open ? openPath.filter((k) => k !== key) : [...openPath, key]);
+                }}
                 onMouseEnter={() => {
+                  cancelClose();
                   if (!open) setOpenPath([...openPath.filter((k) => !k.startsWith(keyPrefix)), key]);
                 }}
                 className="flex w-full items-center gap-3 px-3 py-1.5 text-left text-[13px] text-[#2b2622] hover:bg-gdoc-hover"
@@ -375,7 +490,12 @@ export default function MenuBar({
                 <ChevronRight size={13} className="flex-none text-gdoc-muted" />
               </button>
               {open && (
-                <div className="dropdown absolute left-full top-0 z-50 ml-0.5 max-h-[320px] w-[240px] overflow-y-auto rounded-md border border-gdoc-border bg-white py-1 shadow-xl">
+                // No max-height / overflow here: a scrolling fly-out would clip
+                // its own nested fly-outs (see SYM_SECTIONS).
+                <div
+                  className="dropdown absolute left-full top-0 z-50 ml-0.5 w-[240px] rounded-md border border-gdoc-border bg-white py-1 shadow-xl"
+                  onMouseEnter={cancelClose}
+                >
                   {renderItems(item.sub, menu, depth + 1, key)}
                 </div>
               )}
@@ -387,11 +507,12 @@ export default function MenuBar({
         const isCheck = 'check' in item && item.check;
         const isDisabled = disabled?.[item.id];
         const opensGrid = 'gridPicker' in item && item.gridPicker;
+        const opensSymbols = 'charPanel' in item && !!item.charPanel;
         return (
           <button
             key={item.id}
             disabled={isDisabled}
-            onClick={() => (opensGrid ? setGrid(true) : fire(item.id))}
+            onClick={() => (opensGrid ? setGrid(true) : opensSymbols ? setSymbols(true) : fire(item.id))}
             className={`flex w-full items-center gap-3 px-3 py-1.5 text-left text-[13px] ${
               isDisabled ? 'cursor-not-allowed text-gdoc-muted/50' : 'text-[#2b2622] hover:bg-gdoc-hover'
             }`}
@@ -440,6 +561,15 @@ export default function MenuBar({
               className="w-[210px] rounded bg-transparent px-1 text-[15px] font-medium text-[#2b2622] outline-none hover:bg-gdoc-hover focus:bg-gdoc-hover"
               value={title}
               onChange={(e) => onTitleChange(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter just sets the name and drops focus - no dialog, no
+                // confirm step. Escape does the same (the value on screen is
+                // already the name).
+                if (e.key === 'Enter' || e.key === 'Escape') {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                }
+              }}
               spellCheck={false}
               aria-label="Document title"
             />
@@ -460,11 +590,13 @@ export default function MenuBar({
                     setOpenMenu(openMenu === name ? null : name);
                     setOpenPath([]);
                     setGrid(false);
+                    setSymbols(false);
                   }}
                   onMouseEnter={() => {
                     if (openMenu && openMenu !== name) {
                       setOpenMenu(name);
                       setOpenPath([]);
+                      setSymbols(false);
                     }
                   }}
                   className={`flex items-center gap-0.5 rounded px-2 py-1 text-[13px] transition-colors hover:bg-gdoc-hover ${
@@ -487,6 +619,12 @@ export default function MenuBar({
                         onCancel={() => setGrid(false)}
                         size={gridSize}
                         setSize={setGridSize}
+                      />
+                    ) : name === 'Insert' && symbols ? (
+                      <SymbolPanel
+                        sections={SYM_SECTIONS}
+                        onPick={(ch) => fire(`insert.char.${ch}`)}
+                        onCancel={() => setSymbols(false)}
                       />
                     ) : (
                       renderItems(MENUS[name], name, 0, name)
@@ -546,6 +684,56 @@ function TableGrid({
       </div>
       <div className="mt-2 text-[12px] text-gdoc-muted">
         {size.r > 0 && size.c > 0 ? `${size.r} × ${size.c} table` : 'Hover to choose a size'}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- symbols & emoji palette (Insert > Symbols & emoji) ---------- */
+
+/**
+ * A flat, scrollable palette of glyphs - every entry shows its own character
+ * as the "icon", so nothing in the menu is a blank slot. Kept to one level
+ * deep (no fly-outs) so it can scroll without clipping anything.
+ */
+function SymbolPanel({
+  sections,
+  onPick,
+  onCancel,
+}: {
+  sections: SymSection[];
+  onPick: (ch: string) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="p-3" onMouseDown={(e) => e.stopPropagation()}>
+      <button
+        onClick={onCancel}
+        className="mb-2 flex items-center gap-2 text-[13px] text-gdoc-muted hover:text-[#2b2622]"
+      >
+        <ChevronRight size={13} className="rotate-180" /> Symbols &amp; emoji
+      </button>
+      <div className="max-h-[380px] overflow-y-auto pr-1">
+        {sections.map((section) => (
+          <div key={section.title} className="mb-3 last:mb-0">
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-gdoc-muted">
+              {section.title}
+            </div>
+            <div className="grid grid-cols-8 gap-[2px]">
+              {section.chars.map(({ ch, name }) => (
+                <button
+                  key={ch}
+                  title={name}
+                  aria-label={name}
+                  onClick={() => onPick(ch)}
+                  className="grid h-[26px] w-[26px] place-items-center rounded text-[17px] leading-none text-[#2b2622] hover:bg-gdoc-hover"
+                >
+                  {ch}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

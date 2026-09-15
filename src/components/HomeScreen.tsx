@@ -1,5 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FileText, Search, MoreVertical, Trash2, Upload, X, BookOpen, FileStack } from 'lucide-react';
+import {
+  FileText,
+  Search,
+  MoreVertical,
+  Plus,
+  Trash2,
+  Upload,
+  X,
+  BookOpen,
+  FileStack,
+  Pencil,
+  ImagePlus,
+} from 'lucide-react';
 import { TEMPLATES, type Template } from '../data/templates';
 import type { StoredDocument } from '../lib/storage';
 import { fuzzyMatchFields, type FieldedMatch } from '../lib/fuzzy';
@@ -9,6 +21,8 @@ interface HomeScreenProps {
   onOpenTemplate: (tpl: Template) => void;
   onOpenRecent: (doc: StoredDocument) => void;
   onDeleteRecent: (id: string) => void;
+  /** Rename a saved document from its card (Enter or blur commits). */
+  onRenameRecent: (id: string, title: string) => void;
   onImportFile: (file: File) => void;
   /** Merge several .bulletin files into one issue. */
   onMergeFiles: (files: File[]) => void;
@@ -31,7 +45,6 @@ function searchAll(query: string, recentDocs: StoredDocument[]): SearchHit[] {
   for (const tpl of TEMPLATES) {
     const m = fuzzyMatchFields(q, [
       { text: tpl.name, weight: 1 },
-      { text: tpl.subtitle, weight: 0.5 },
       { text: tpl.blurb, weight: 0.2 },
     ]);
     if (m) hits.push({ kind: 'template', tpl, score: m.score, titlePos: m.positions[0] });
@@ -93,6 +106,7 @@ export default function HomeScreen({
   onOpenTemplate,
   onOpenRecent,
   onDeleteRecent,
+  onRenameRecent,
   onImportFile,
   onMergeFiles,
   onOpenGuide,
@@ -159,13 +173,15 @@ export default function HomeScreen({
   const q = query.trim().toLowerCase();
   const filteredTemplates = q
     ? TEMPLATES.filter(
-        (t) =>
-          t.name.toLowerCase().includes(q) ||
-          t.subtitle.toLowerCase().includes(q) ||
-          t.blurb.toLowerCase().includes(q),
+        (t) => t.name.toLowerCase().includes(q) || t.blurb.toLowerCase().includes(q),
       )
     : TEMPLATES;
   const filteredRecents = q ? recentDocs.filter((d) => d.title.toLowerCase().includes(q)) : recentDocs;
+
+  // Card sizes are fixed here: zooming the template picker lives in the editor
+  // now, so the home screen stays a plain launcher.
+  const cardW = 140;
+  const cardMin = 170;
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-[#f8f9fa] font-ui text-[#2b2622]">
@@ -225,8 +241,7 @@ export default function HomeScreen({
                 <div ref={listRef}>
                   {hits.map((hit, i) => {
                     const isActive = i === active;
-                    const title =
-                      hit.kind === 'doc' ? hit.doc.title : hit.tpl.subtitle ? `${hit.tpl.name} · ${hit.tpl.subtitle}` : hit.tpl.name;
+                    const title = hit.kind === 'doc' ? hit.doc.title : hit.tpl.name;
                     return (
                       <button
                         key={hit.kind === 'doc' ? hit.doc.id : hit.tpl.id}
@@ -252,7 +267,7 @@ export default function HomeScreen({
                                   day: 'numeric',
                                   month: 'short',
                                 })}`
-                              : `Template — ${hit.tpl.blurb}`}
+                              : `Template - ${hit.tpl.blurb}`}
                           </span>
                         </span>
                         {hit.kind === 'template' && (
@@ -333,17 +348,30 @@ export default function HomeScreen({
                 key={tpl.id}
                 onClick={() => onOpenTemplate(tpl)}
                 title={tpl.blurb}
-                className="group w-[140px] flex-none text-left"
+                style={{ width: cardW }}
+                className="group flex-none text-left"
               >
-                <div className="w-full overflow-hidden rounded border border-gdoc-border bg-white shadow-sm transition-shadow hover:shadow-md">
-                  <ScaledDoc content={tpl.content} faint />
+                <div className="relative w-full overflow-hidden rounded border border-gdoc-border bg-white shadow-sm transition-shadow hover:shadow-md">
+                  {tpl.cover ? (
+                    <CoverThumb label={tpl.cover.ph} />
+                  ) : (
+                    <ScaledDoc content={tpl.content} columns={tpl.frame?.columns} faint />
+                  )}
+                  {/* The blank page wears a big plus, the way a document
+                      picker should: "start from nothing". */}
+                  {tpl.plus && (
+                    <span className="pointer-events-none absolute inset-0 grid place-items-center">
+                      <Plus
+                        size={48}
+                        strokeWidth={2}
+                        className="text-bb-500 transition-transform group-hover:scale-110"
+                      />
+                    </span>
+                  )}
                 </div>
                 <span className="mt-2 block w-full truncate text-[13px] font-medium text-[#3c4043]">
                   {tpl.name}
                 </span>
-                {tpl.subtitle && (
-                  <span className="block w-full truncate text-[12px] text-gdoc-muted">{tpl.subtitle}</span>
-                )}
               </button>
             ))}
             {filteredTemplates.length === 0 && (
@@ -366,13 +394,17 @@ export default function HomeScreen({
               {recentDocs.length === 0 ? '' : `No documents match “${query}”.`}
             </p>
           ) : (
-            <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4">
+            <div
+              className="grid gap-x-4 gap-y-6"
+              style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${cardMin}px, 1fr))` }}
+            >
               {filteredRecents.map((doc) => (
                 <RecentCard
                   key={doc.id}
                   doc={doc}
                   onOpen={() => onOpenRecent(doc)}
                   onDelete={() => onDeleteRecent(doc.id)}
+                  onRename={(title) => onRenameRecent(doc.id, title)}
                 />
               ))}
             </div>
@@ -388,12 +420,16 @@ function RecentCard({
   doc,
   onOpen,
   onDelete,
+  onRename,
 }: {
   doc: StoredDocument;
   onOpen: () => void;
   onDelete: () => void;
+  onRename: (title: string) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(doc.title);
   const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -404,6 +440,15 @@ function RecentCard({
     window.addEventListener('mousedown', close);
     return () => window.removeEventListener('mousedown', close);
   }, [menuOpen]);
+
+  useEffect(() => setDraft(doc.title), [doc.title]);
+
+  const commit = () => {
+    setRenaming(false);
+    const next = draft.trim();
+    if (next && next !== doc.title) onRename(next);
+    else setDraft(doc.title);
+  };
 
   return (
     <div className="group">
@@ -420,18 +465,37 @@ function RecentCard({
 
       <div ref={boxRef} className="relative mt-2">
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <button
-              onClick={onOpen}
-              className="block w-full truncate text-left text-[14px] font-medium text-[#3c4043] hover:text-bb-700"
-              title={doc.title}
-            >
-              {doc.title}
-            </button>
-            <p className="truncate text-[12px] text-gdoc-muted">
-              <span className="mr-1 inline-block h-3 w-3 rounded-[3px] bg-bb-400 align-middle" />
-              Opened {formatOpened(doc.updatedAt)}
-            </p>
+          <div className="min-w-0 flex-1">
+            {renaming ? (
+              <input
+                autoFocus
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    commit();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setDraft(doc.title);
+                    setRenaming(false);
+                  }
+                }}
+                onBlur={commit}
+                onFocus={(e) => e.currentTarget.select()}
+                className="w-full rounded border border-bb-400 px-1 text-[14px] font-medium text-[#3c4043] outline-none"
+                aria-label="Document name"
+              />
+            ) : (
+              <button
+                onClick={onOpen}
+                className="block w-full truncate text-left text-[14px] font-medium text-[#3c4043] hover:text-bb-700"
+                title={doc.title}
+              >
+                {doc.title}
+              </button>
+            )}
+            <p className="truncate text-[12px] text-gdoc-muted">Opened {formatOpened(doc.updatedAt)}</p>
           </div>
 
           <button
@@ -459,6 +523,17 @@ function RecentCard({
             <button
               onClick={() => {
                 setMenuOpen(false);
+                setDraft(doc.title);
+                setRenaming(true);
+              }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] hover:bg-gdoc-hover"
+            >
+              <Pencil size={14} className="text-gdoc-muted" />
+              Rename
+            </button>
+            <button
+              onClick={() => {
+                setMenuOpen(false);
                 onDelete();
               }}
               className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-red-600 hover:bg-gdoc-hover"
@@ -482,10 +557,39 @@ function formatOpened(ts: number): string {
   }
 }
 
-/** Render document HTML scaled down to fit its container, like a page icon. */
-function ScaledDoc({ content, faint }: { content: string; faint?: boolean }) {
+/** The title page opens as a full-page picture, so its card previews as an
+    empty image frame rather than a blank sheet. */
+function CoverThumb({ label }: { label: string }) {
+  return (
+    <div
+      className="relative w-full"
+      style={{ aspectRatio: '816/1056', background: '#fff' }}
+    >
+      <div className="absolute inset-2 grid place-items-center rounded-[3px] border border-dashed border-gdoc-border bg-[#faf8f5]">
+        <span className="flex flex-col items-center gap-1 text-gdoc-muted">
+          <ImagePlus size={22} />
+          <span className="px-2 text-center text-[10px] leading-tight">Add {label}</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** Render document HTML scaled down to fit its container, like a page icon.
+    `columns` mirrors a template's text-frame columns so a two-column page
+    previews with its gray rule, not as one wide column. */
+function ScaledDoc({
+  content,
+  faint,
+  columns,
+}: {
+  content: string;
+  faint?: boolean;
+  columns?: number;
+}) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0);
+  const cols = Math.max(1, Math.round(columns ?? 1));
 
   useEffect(() => {
     const el = boxRef.current;
@@ -509,6 +613,11 @@ function ScaledDoc({ content, faint }: { content: string; faint?: boolean }) {
       >
         <div
           className={`px-14 py-16 ${faint ? 'opacity-70' : ''}`}
+          style={{
+            columnCount: cols,
+            columnGap: cols > 1 ? 28 : undefined,
+            columnRule: cols > 1 ? '1px solid #d8d2ca' : undefined,
+          }}
           dangerouslySetInnerHTML={{ __html: content }}
         />
       </div>

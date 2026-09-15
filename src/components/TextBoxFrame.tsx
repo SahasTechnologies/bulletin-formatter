@@ -273,7 +273,7 @@ export default function TextBoxFrame({
       {overflow && (
         <button
           className="tb-link-handle"
-          title="Text does not fit — click to link a new frame, then click where it should go"
+          title="Text does not fit - click to link a new frame, then click where it should go"
           onMouseDown={(e) => {
             e.preventDefault();
             e.stopPropagation();

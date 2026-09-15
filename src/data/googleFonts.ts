@@ -1,5 +1,5 @@
 // AUTO-GENERATED from https://fonts.google.com/metadata/fonts
-// Contains 1946 Google Fonts. Do not edit by hand — regenerate via scripts/build-fonts.mjs.
+// Contains 1946 Google Fonts. Do not edit by hand - regenerate via scripts/build-fonts.mjs.
 export type FontCategory = 'sans-serif' | 'serif' | 'display' | 'handwriting' | 'monospace';
 
 export interface GoogleFont {

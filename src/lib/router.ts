@@ -1,5 +1,5 @@
 /**
- * A 20-line path router — enough for the app's single `/guide` route without
+ * A 20-line path router - enough for the app's single `/guide` route without
  * pulling in react-router. Vite's dev server and `vite preview` both fall back
  * to index.html for unknown paths, so `/guide` deep-links fine.
  */

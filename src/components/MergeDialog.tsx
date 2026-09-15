@@ -85,7 +85,7 @@ export default function MergeDialog({
           ) : (
             <>
               <p className="mb-2 text-[13px] text-gdoc-muted">
-                {inputs.length} page{inputs.length === 1 ? '' : 's'} — drag them into the order
+                {inputs.length} page{inputs.length === 1 ? '' : 's'} - drag them into the order
                 you want with the arrows. The cover goes to the front, the end page to the
                 bottom.
               </p>
@@ -162,12 +162,12 @@ export default function MergeDialog({
 
               {preview && (
                 <p className="mt-3 rounded bg-[#faf7f4] px-3 py-2 text-[12px] text-gdoc-muted">
-                  Result: {preview.entries.length} page
-                  {preview.entries.length === 1 ? '' : 's'}
+                  Result: {preview.pageCount} page
+                  {preview.pageCount === 1 ? '' : 's'}
                   {willGenerateContents
                     ? ', plus a generated page of contents'
                     : importedContents
-                      ? ' — using the contents page you imported'
+                      ? ' - using the contents page you imported'
                       : ''}
                   .
                 </p>

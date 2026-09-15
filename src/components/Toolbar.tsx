@@ -6,8 +6,6 @@ import {
   Redo2,
   Printer,
   SpellCheck,
-  ZoomIn,
-  ZoomOut,
   ChevronDown,
   Bold,
   Italic,
@@ -42,6 +40,7 @@ import {
 import { GOOGLE_FONTS } from '../data/googleFonts';
 import { LOCAL_FONTS } from '../data/localFonts';
 import { useGoogleFont } from './GoogleFontProvider';
+import { BULLETIN_PARAGRAPH_STYLES, type ParagraphStyleDef } from '../data/paragraphStyles';
 import * as ed from '../lib/editor';
 
 const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 96];
@@ -57,18 +56,8 @@ const HIGHLIGHT_COLORS = [
   'transparent', '#ffe599', '#b6d7a8', '#a4c2f4', '#f4cccc', '#f9cb9c', '#d9d2e9', '#ead1dc',
 ];
 
-/** Paragraph styles, each carrying the typography used for its dropdown preview. */
-const PARAGRAPH_STYLES: { label: string; tag: string; preview: React.CSSProperties }[] = [
-  { label: 'Normal text', tag: 'p', preview: { fontSize: '13px', fontWeight: 400 } },
-  { label: 'Title', tag: 'h1', preview: { fontSize: '20px', fontWeight: 500, letterSpacing: '-0.2px' } },
-  { label: 'Subtitle', tag: 'h2', preview: { fontSize: '15px', fontWeight: 400, color: '#6b6257' } },
-  { label: 'Heading 1', tag: 'h1', preview: { fontSize: '19px', fontWeight: 600 } },
-  { label: 'Heading 2', tag: 'h2', preview: { fontSize: '16px', fontWeight: 600 } },
-  { label: 'Heading 3', tag: 'h3', preview: { fontSize: '14px', fontWeight: 600 } },
-  { label: 'Heading 4', tag: 'h4', preview: { fontSize: '13px', fontWeight: 600 } },
-  { label: 'Heading 5', tag: 'h5', preview: { fontSize: '12px', fontWeight: 600 } },
-  { label: 'Heading 6', tag: 'h6', preview: { fontSize: '11px', fontWeight: 600, color: '#6b6257' } },
-];
+/** Paragraph styles driven by the Design Guide. */
+const PARAGRAPH_STYLES = BULLETIN_PARAGRAPH_STYLES;
 
 const LINE_SPACINGS = [
   { label: 'Single', value: 1 },
@@ -82,10 +71,14 @@ const LINE_SPACINGS = [
 const FONT_PAGE = 150; // fonts rendered per "page" of the dropdown list
 const GAP = 6; // px between controls (gap-1.5)
 
+/** Shared tooltip for the master-page control (inline icon + ⋮ strip label). */
+const MASTER_TITLE =
+  'Master page - edit the header & footer shown on every page. Tip: double-click outside the orange guide on any page.';
+
 // Order of controls in the pill. The essentials are always shown; the rest
 // slide into the horizontal ⋮ strip when the window is too narrow.
 const ALL_KEYS = [
-  'find', 'undo', 'redo', 'print', 'spell', 'zoom', 'style', 'font', 'size',
+  'find', 'undo', 'redo', 'print', 'spell', 'style', 'font', 'size',
   'bold', 'italic', 'underline', 'textColor', 'highlight',
   'link', 'image', 'alignL', 'alignC', 'alignR', 'alignJ', 'bullet', 'number',
   'indentDec', 'indentInc', 'lineSpacing', 'master',
@@ -94,17 +87,18 @@ type ItemKey = (typeof ALL_KEYS)[number];
 
 /**
  * Which controls form one visual group. A hairline divider is drawn on the
- * leading edge of every group, so the eye reads "these belong together" —
+ * leading edge of every group, so the eye reads "these belong together" -
  * in particular the font cluster (font name → size → B/I/U/colour) is fenced
  * off from the paragraph tools. Keys that share a number are separated by a
  * gap only.
  */
 const GROUPS: Record<ItemKey, number> = {
   find: 1, undo: 1, redo: 1, print: 1, spell: 1, // document & view
-  zoom: 2,
+  // Zoom deliberately lives in the status bar only (and on the home screen),
+  // not in this pill - one place to reach it, at the bottom of the sheet.
   style: 3,
   font: 4,
-  size: 5, // − [pt] + — one unit
+  size: 5, // − [pt] + - one unit
   bold: 6, italic: 6, underline: 6, textColor: 6, highlight: 6, // character
   link: 7, image: 7, // insert
   alignL: 8, alignC: 8, alignR: 8, alignJ: 8, // paragraph
@@ -115,7 +109,7 @@ const GROUPS: Record<ItemKey, number> = {
 };
 
 const ESSENTIALS = new Set<ItemKey>([
-  'find', 'undo', 'redo', 'print', 'spell', 'zoom', 'style', 'font', 'size',
+  'find', 'undo', 'redo', 'print', 'spell', 'style', 'font', 'size',
   'bold', 'italic', 'underline', 'textColor', 'highlight',
 ]);
 
@@ -123,7 +117,6 @@ export interface ToolbarState {
   font: string;
   size: number;
   style: string;
-  zoom: number;
   spellCheck: boolean;
   searchOpen: boolean;
 }
@@ -132,7 +125,6 @@ interface ToolbarProps extends ToolbarState {
   setFont: (v: string) => void;
   setSize: (v: number) => void;
   setStyle: (v: string) => void;
-  setZoom: React.Dispatch<React.SetStateAction<number>>;
   setSpellCheck: (v: boolean) => void;
   setSearchOpen: (v: boolean) => void;
   onToggleToolbar: () => void;
@@ -153,8 +145,8 @@ function keepSelection(e: React.MouseEvent) {
 
 export default function Toolbar(props: ToolbarProps) {
   const {
-    font, size, style, zoom, spellCheck, searchOpen,
-    setFont, setSize, setStyle, setZoom, setSpellCheck, setSearchOpen, onToggleToolbar,
+    font, size, style, spellCheck, searchOpen,
+    setFont, setSize, setStyle, setSpellCheck, setSearchOpen, onToggleToolbar,
     onInsertImage,
     onToggleMaster,
     masterOpen = false,
@@ -224,7 +216,11 @@ export default function Toolbar(props: ToolbarProps) {
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       const t = e.target as Node;
-      if (rootRef.current?.contains(t)) return;
+      // `outerRef` wraps the pill *and* the ⋮ overflow strip. Testing only the
+      // pill here meant a mousedown on a strip control unmounted the strip
+      // before mouseup, so the click never reached the button - the whole
+      // overflow strip was silently dead.
+      if (outerRef.current?.contains(t)) return;
       // Clicks inside a portaled dropdown panel belong to the toolbar too.
       if (t instanceof Element && t.closest('[data-dropdown-panel]')) return;
       setOpen(null);
@@ -298,9 +294,16 @@ export default function Toolbar(props: ToolbarProps) {
   const applyFont = (family: string) => {
     isApplyingStyleRef.current = true;
     if (isGoogleFont(family)) loadFont(family);
-    ed.applyInlineStyle('font-family', `"${family}", "Red Hat Text", sans-serif`);
+    const stack = `"${family}", "Red Hat Text", sans-serif`;
+    ed.applyInlineStyle('font-family', stack);
     const editor = ed.getEditor();
-    if (editor) editor.focus();
+    if (editor) {
+      // Also set the frame's own font, so a later Ctrl+A (which selects the
+      // contents and replaces them when you type) keeps the chosen face
+      // instead of falling back to the frame's original type.
+      editor.style.fontFamily = stack;
+      editor.focus();
+    }
     setTimeout(() => {
       isApplyingStyleRef.current = false;
     }, 50);
@@ -314,7 +317,12 @@ export default function Toolbar(props: ToolbarProps) {
     setSize(pt);
     setOpen(null);
     const editor = ed.getEditor();
-    if (editor) editor.focus();
+    if (editor) {
+      // Mirror the size on the frame too (see applyFont), so select-all + type
+      // keeps the size the user just picked.
+      editor.style.fontSize = `${pt}pt`;
+      editor.focus();
+    }
     setTimeout(() => {
       isApplyingStyleRef.current = false;
     }, 100);
@@ -324,8 +332,7 @@ export default function Toolbar(props: ToolbarProps) {
    * The −/+ steppers walk the FONT_SIZES ladder rather than nudging by 1pt, so
    * every step lands on a value the size dropdown can tick. Sizes that are not
    * on the ladder (a template may set 13pt) move by 1pt so the first press is
-   * never a surprise jump. At either end of the ladder the button does nothing,
-   * matching the zoom control's clamp behaviour.
+   * never a surprise jump. At either end of the ladder the button does nothing.
    */
   const stepSize = (dir: -1 | 1) => {
     if (!FONT_SIZES.includes(size)) {
@@ -339,9 +346,35 @@ export default function Toolbar(props: ToolbarProps) {
     if (next !== undefined) applySize(next);
   };
 
-  const applyStyle = (s: (typeof PARAGRAPH_STYLES)[number]) => {
-    ed.formatBlock(s.tag);
+  const applyStyle = (s: ParagraphStyleDef) => {
+    isApplyingStyleRef.current = true;
+    if (isGoogleFont(s.font)) loadFont(s.font);
+    ed.applyInlineStyle('font-family', s.fontFamily);
+    ed.applyInlineStyle('font-size', s.size);
+    ed.exec('foreColor', s.colour);
+    if (s.italic) ed.exec('italic');
+    if (s.bold) ed.exec('bold');
+    if (s.align === 'center') ed.exec('justifyCenter');
+    else if (s.align === 'justify') ed.exec('justifyFull');
+    else if (s.align === 'right') ed.exec('justifyRight');
+    else ed.exec('justifyLeft');
+
+    const editor = ed.getEditor();
+    if (editor) {
+      editor.style.fontFamily = s.fontFamily;
+      editor.style.fontSize = s.size;
+      editor.style.color = s.colour;
+      editor.style.textAlign = s.align;
+      editor.style.lineHeight = String(s.lineHeight);
+      editor.setAttribute('data-bulletin-style', s.id);
+      editor.focus();
+    }
+    setTimeout(() => {
+      isApplyingStyleRef.current = false;
+    }, 80);
     setStyle(s.label);
+    setFont(s.font);
+    setSize(s.fontSizePt);
     setOpen(null);
   };
 
@@ -349,15 +382,37 @@ export default function Toolbar(props: ToolbarProps) {
 
   /* -------- shared dropdown panel bodies -------- */
   const renderStylePanel = () => (
-    <>
+    <div className="max-h-[380px] overflow-y-auto py-1">
+      <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-stone-400">
+        Design Guide Styles
+      </div>
       {PARAGRAPH_STYLES.map((s) => (
-        <button key={s.label} onMouseDown={keepSelection} onClick={() => applyStyle(s)}
-          className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left hover:bg-gdoc-hover">
-          <span style={s.preview} className="truncate">{s.label}</span>
-          {style === s.label && <Check size={14} className="flex-none text-bb-600" />}
+        <button
+          key={s.id}
+          onMouseDown={keepSelection}
+          onClick={() => applyStyle(s)}
+          className="flex w-full items-start justify-between gap-2 px-3 py-2 text-left hover:bg-gdoc-hover transition-colors"
+        >
+          <div className="min-w-0 flex-1">
+            <div
+              style={{
+                fontFamily: s.fontFamily,
+                color: s.colour,
+                fontStyle: s.italic ? 'italic' : 'normal',
+                fontWeight: s.bold ? 600 : 400,
+              }}
+              className="truncate text-[13px] leading-snug"
+            >
+              {s.label}
+            </div>
+            <div className="text-[10px] text-stone-400 truncate">
+              {s.description}
+            </div>
+          </div>
+          {style === s.label && <Check size={14} className="flex-none text-bb-600 mt-0.5" />}
         </button>
       ))}
-    </>
+    </div>
   );
 
   const renderFontPanel = () => (
@@ -461,17 +516,15 @@ export default function Toolbar(props: ToolbarProps) {
       case 'find':
         return <ToolBtn title="Find in document (Ctrl + F)" active={searchOpen} onClick={() => setSearchOpen(!searchOpen)}><Search size={18} /></ToolBtn>;
       case 'undo':
-        return <ToolBtn title="Undo (Ctrl + Z)" onClick={() => ed.exec('undo')}><Undo2 size={18} /></ToolBtn>;
+        return <ToolBtn title="Undo (Ctrl + Z)" onClick={() => ed.history('undo')}><Undo2 size={18} /></ToolBtn>;
       case 'redo':
-        return <ToolBtn title="Redo (Ctrl + Y)" onClick={() => ed.exec('redo')}><Redo2 size={18} /></ToolBtn>;
+        return <ToolBtn title="Redo (Ctrl + Y)" onClick={() => ed.history('redo')}><Redo2 size={18} /></ToolBtn>;
       case 'print':
         return <ToolBtn title="Print (Ctrl + P)" onClick={() => window.print()}><Printer size={18} /></ToolBtn>;
       case 'spell':
         return <ToolBtn title="Toggle spellcheck" active={spellCheck} onClick={() => setSpellCheck(!spellCheck)}><SpellCheck size={18} /></ToolBtn>;
-      case 'zoom':
-        return <ZoomControl zoom={zoom} setZoom={setZoom} open={o('zoom')} onOpenChange={(v) => setOpen(v ? 'zoom' : null)} />;
       case 'style':
-        return <Dropdown open={o('style')} softOpen onOpenChange={(v) => setOpen(v ? 'style' : null)} title="Paragraph styles" label={iconOnly ? <Pilcrow size={18} /> : <span className="text-[13px]">{activeStyle.label}</span>} width={210}>{renderStylePanel()}</Dropdown>;
+        return <Dropdown open={o('style')} softOpen onOpenChange={(v) => setOpen(v ? 'style' : null)} title="Paragraph styles" label={iconOnly ? <Pilcrow size={18} /> : <span className="text-[13px]">{activeStyle.label}</span>} width={270}>{renderStylePanel()}</Dropdown>;
       case 'font':
         return (
           <Dropdown
@@ -571,7 +624,24 @@ export default function Toolbar(props: ToolbarProps) {
       case 'lineSpacing':
         return <Dropdown open={o('lineSpacing')} onOpenChange={(v) => setOpen(v ? 'lineSpacing' : null)} label={<Rows3 size={18} />} title="Line spacing" width={170}>{renderLineSpacingPanel()}</Dropdown>;
       case 'master':
-        return <ToolBtn title="Master page — edit the header & footer shown on every page" active={masterOpen} onClick={() => onToggleMaster?.()}><Newspaper size={18} /></ToolBtn>;
+        // A bare newspaper glyph gave no clue which control opens the master
+        // page, so this one control spells its name out wherever it lands -
+        // inline in the pill or in the ⋮ overflow strip. The hidden measuring
+        // pass renders the same labelled button, so the pill's fit maths stay
+        // honest (an icon-width measurement would let it overflow the pill).
+        return (
+          <button
+            title={MASTER_TITLE}
+            onMouseDown={keepSelection}
+            onClick={() => onToggleMaster?.()}
+            className={`flex h-8 flex-none items-center gap-1.5 rounded-md px-2 text-[12px] font-medium transition-colors ${
+              masterOpen ? 'bg-bb-500 text-white' : 'text-bb-900 hover:bg-bb-200/60'
+            }`}
+          >
+            <Newspaper size={16} />
+            <span>Master Page</span>
+          </button>
+        );
       default:
         return null;
     }
@@ -584,7 +654,7 @@ export default function Toolbar(props: ToolbarProps) {
    * for two reasons: the measuring pass then counts the line in `offsetWidth`
    * (a standalone `<div>` would add width the fit calculation never sees, and
    * the pill would spill past its rounded edge), and it costs 1px instead of
-   * ~9px. That matters — at 1440px the row is within ~20px of full, so padded
+   * ~9px. That matters - at 1440px the row is within ~20px of full, so padded
    * dividers push the last controls into the ⋮ strip. The row's own `gap-1.5`
    * supplies the space either side of the line.
    */
@@ -656,14 +726,14 @@ export default function Toolbar(props: ToolbarProps) {
         ref={rootRef}
         className="relative flex w-full max-w-full flex-nowrap items-center rounded-full border border-bb-100 bg-bb-50 py-1 pl-4 pr-3 text-bb-900 shadow-sm"
       >
-        {/* Inline pill row — one icon high, never wraps. */}
+        {/* Inline pill row - one icon high, never wraps. */}
         <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 overflow-visible">
           {inlineKeys.map((k, i) => wrapped(k, trigger(k), startsGroup(inlineKeys, i)))}
         </div>
 
         <div className="flex-none pl-2" />
 
-        {/* Pinned ⋮ — toggles the horizontal overflow strip. */}
+        {/* Pinned ⋮ - toggles the horizontal overflow strip. */}
         <div ref={pinnedRef} className="relative flex flex-none items-center pl-1">
           <ToolBtn
             title="More tools"
@@ -675,7 +745,7 @@ export default function Toolbar(props: ToolbarProps) {
         </div>
       </div>
 
-      {/* Horizontal overflow strip — icons only, spans the full width. */}
+      {/* Horizontal overflow strip - icons only, spans the full width. */}
       {moreOpen && (
         <div className="mt-1.5 flex w-full justify-center">
           <div
@@ -695,7 +765,7 @@ export default function Toolbar(props: ToolbarProps) {
         </div>
       )}
 
-      {/* Hidden measuring pass — every control rendered closed for width. */}
+      {/* Hidden measuring pass - every control rendered closed for width. */}
       <div
         ref={measurerRef}
         aria-hidden
@@ -736,83 +806,6 @@ function ToolBtn({
     >
       {children}
     </button>
-  );
-}
-
-function ZoomControl({
-  zoom,
-  setZoom,
-  open,
-  onOpenChange,
-}: {
-  zoom: number;
-  setZoom: React.Dispatch<React.SetStateAction<number>>;
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-
-  // Close when clicking outside both the trigger and the portaled panel.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (btnRef.current?.contains(t) || panelRef.current?.contains(t)) return;
-      onOpenChange(false);
-    };
-    window.addEventListener('mousedown', onDown);
-    return () => window.removeEventListener('mousedown', onDown);
-  }, [open, onOpenChange]);
-
-  // Panel position, portaled so the scrollable strip can't clip it.
-  useEffect(() => {
-    if (!open) {
-      setPos(null);
-      return;
-    }
-    const update = () => {
-      const r = btnRef.current?.getBoundingClientRect();
-      if (!r) return;
-      setPos({ left: Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - 160 - 8)), top: r.bottom + 6 });
-    };
-    update();
-    window.addEventListener('resize', update);
-    window.addEventListener('scroll', update, true);
-    return () => {
-      window.removeEventListener('resize', update);
-      window.removeEventListener('scroll', update, true);
-    };
-  }, [open]);
-
-  return (
-    <div ref={ref} className="relative flex-none">
-      <div className="flex h-8 items-center rounded-md text-bb-900 hover:bg-bb-200/60">
-        <button onMouseDown={keepSelection} onClick={() => setZoom((z) => Math.max(50, z - 10))} className="grid h-8 w-7 place-items-center" title="Zoom out"><ZoomOut size={16} /></button>
-        <button ref={btnRef} onMouseDown={keepSelection} onClick={() => onOpenChange(!open)} className="px-1 text-[13px]" title="Zoom level">{zoom}%</button>
-        <button onMouseDown={keepSelection} onClick={() => setZoom((z) => Math.min(200, z + 10))} className="grid h-8 w-7 place-items-center" title="Zoom in"><ZoomIn size={16} /></button>
-      </div>
-      {open && pos &&
-        createPortal(
-          <div
-            ref={panelRef}
-            data-dropdown-panel
-            className="dropdown fixed z-[60] w-40 rounded-md border border-gdoc-border bg-white py-1 text-[#2b2622] shadow-lg"
-            style={{ left: pos.left, top: pos.top }}
-          >
-            {[50, 75, 90, 100, 125, 150, 200].map((p) => (
-              <button key={p} onMouseDown={keepSelection} onClick={() => { setZoom(p); onOpenChange(false); }}
-                className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[13px] hover:bg-gdoc-hover">
-                <span className="flex-1">{p}%</span>
-                {zoom === p && <Check size={14} className="flex-none text-bb-600" />}
-              </button>
-            ))}
-          </div>,
-          document.body,
-        )}
-    </div>
   );
 }
 

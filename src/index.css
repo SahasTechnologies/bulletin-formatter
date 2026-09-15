@@ -9,19 +9,19 @@ body,
 }
 
 /* ---------------------------------------------------------------------------
-   House typefaces — the four families the Design Bible names that are not on
+   House typefaces - the four families the Design Bible names that are not on
    Google Fonts: Biome, Franklin Gothic (all weights and styles), Aparajita and
    Dreaming Outloud Script.
 
    Every rule prefers `local(...)`, so a copy installed on the machine (which
    is also what Microsoft 365 apps use) wins and no font is downloaded at all.
    The bundled file in public/fonts is the fallback for a machine that does not
-   have it — that is how these stay selectable in the font dropdown offline.
+   have it - that is how these stay selectable in the font dropdown offline.
 
    Keep these in step with LOCAL_FONTS in src/data/localFonts.ts.
    --------------------------------------------------------------------------- */
 
-/* Biome — the Bulletin masthead / running-head typeface. */
+/* Biome - the Bulletin masthead / running-head typeface. */
 @font-face {
   font-family: 'Biome';
   src: local('Biome'), url('/fonts/biome.ttf') format('truetype');
@@ -30,7 +30,7 @@ body,
   font-display: swap;
 }
 
-/* Dreaming Outloud Script — the end page's 'Thank You for Reading' script.
+/* Dreaming Outloud Script - the end page's 'Thank You for Reading' script.
    Also installed as 'Dreaming Outloud Script Pro' (its full family name), so
    both spellings resolve to the same file. */
 @font-face {
@@ -54,7 +54,7 @@ body,
   font-display: swap;
 }
 
-/* Franklin Gothic — the Bulletin's headline family, in every weight and style
+/* Franklin Gothic - the Bulletin's headline family, in every weight and style
    Windows ships (Book / Medium / Demi / Heavy, each with an italic). */
 @font-face {
   font-family: 'Franklin Gothic';
@@ -180,7 +180,7 @@ body,
   font-display: swap;
 }
 
-/* Aparajita — the italic the Bulletin credits artwork in. */
+/* Aparajita - the italic the Bulletin credits artwork in. */
 @font-face {
   font-family: 'Aparajita';
   src: local('Aparajita'), url('/fonts/aparajita.ttf') format('truetype');
@@ -261,12 +261,124 @@ body {
   box-shadow: 0 1px 3px rgba(60, 64, 67, 0.15), 0 4px 8px 3px rgba(60, 64, 67, 0.05);
 }
 
+/* The desk inside the editor - the only scrolling surface.
+
+   `scrollbar-gutter: stable` reserves the vertical scrollbar's track, so the
+   sticky top ruler (and the sticky side ruler) stop short of it instead of the
+   thumb being drawn on top of the graduation lines. The bars themselves are a
+   thin house-orange thumb, matching the app's theme. */
+/* Only the ::-webkit-* rules are used here. Declaring the standard
+   `scrollbar-width`/`scrollbar-color` makes Chromium fall back to its chunky
+   native theme - which on Windows draws arrow buttons at the ends and ignores
+   every colour below - so the desk's bars would stop matching the rest of the
+   app. `scrollbar-gutter` is unrelated to the theme and stays. */
+.doc-main {
+  scrollbar-gutter: stable;
+}
+.doc-main::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.doc-main::-webkit-scrollbar-track {
+  background: #efe9e2;
+}
+.doc-main::-webkit-scrollbar-thumb {
+  background: #ef8a3c;
+  border: 3px solid #efe9e2;
+  border-radius: 8px;
+}
+.doc-main::-webkit-scrollbar-thumb:hover {
+  background: #ea7317;
+}
+.doc-main::-webkit-scrollbar-corner {
+  background: #efe9e2;
+}
+
+/* The Pages pane scrolls too, so it wears the same bar as the desk: a house
+   orange thumb on a track matching the pane's own paper. The gutter is
+   reserved so the page thumbnails never slide under the bar. */
+.page-pane-scroll {
+  scrollbar-gutter: stable;
+}
+.page-pane-scroll::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.page-pane-scroll::-webkit-scrollbar-track {
+  background: #f2ece5;
+}
+.page-pane-scroll::-webkit-scrollbar-thumb {
+  background: #ef8a3c;
+  border: 3px solid #f2ece5;
+  border-radius: 8px;
+}
+.page-pane-scroll::-webkit-scrollbar-thumb:hover {
+  background: #ea7317;
+}
+.page-pane-scroll::-webkit-scrollbar-corner {
+  background: #f2ece5;
+}
+
+/* A page sheet while it is the one being dragged in the Pages pane. */
+.page-tile.is-dragging {
+  opacity: 0.45;
+}
+.page-drop-line {
+  position: relative;
+  height: 2px;
+  margin: 2px 0;
+  border-radius: 2px;
+  background: #ea7317;
+}
+.page-drop-line::before {
+  content: '';
+  position: absolute;
+  left: -3px;
+  top: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: #ea7317;
+}
+
+/* One sheet's zoom wrapper.
+
+   A sheet is drawn with a CSS `transform: scale()`, which never affects
+   layout - so at any zoom above 100% the paper overflowed its (unscaled) box
+   and could not be panned to: the desk had nothing to scroll to, and the left
+   half of a centred sheet was unreachable. This wrapper reserves the sheet's
+   *visual* size in layout (page × zoom), so the desk grows and scrolls both
+   ways. The sheet inside stays at its true size, scaled from the top-left, so
+   the wrapper is exactly the paper. */
+.doc-scaler {
+  position: relative;
+  flex: none;
+}
+
+/* The column of sheets (and the horizontal ruler above it).
+
+   Sized to its content rather than to the viewport: a sheet is a fixed 794 (A4)
+   or 816 (Letter) px wide, and the desk around it is only as wide as the window.
+   When the window is *narrower* than the sheet - a small window, or the master
+   page's right-hand panel taking 350px - centring the sheets (`align-items:
+   center` / `margin: auto` with real free space) makes them overflow on BOTH
+   sides, and the part that overflows past the left edge of a scrolling box can
+   never be reached: no scrollbar brings it back. `min-width: max-content`
+   makes this wrapper the full width of the widest sheet, so the blocks inside
+   centre against each other and the scroller's left edge is the sheet's left
+   edge. The ruler and the sheets share the class, so they stay aligned at
+   every window width. */
+.doc-inner {
+  min-width: max-content;
+}
+
 /* View > Master page: Publisher draws the master sheet on cream stock with a
    dashed non-printing frame, and tabs it in the corner (PAGE A / PAGE B). */
+/* Master view: the sheet is tinted so it reads as "the master, not the
+   publication", but the frame itself is the same pale-blue hairline Publisher
+   draws - no house-orange outline on top of it. */
 .doc-paper.is-master {
-  background: #fef4e9;
-  outline: 2px dashed #fe9c53;
-  outline-offset: 6px;
+  background: #fdf8f2;
 }
 .master-sheet-label {
   position: absolute;
@@ -287,10 +399,17 @@ body {
 /* Master-page furniture: the running head and the folio.
    Publisher puts them inside the page's top and bottom margins and spans them
    across the full text column, so moving a margin moves the furniture too.
-   Geometry (left/top/width/height) is set inline from the live margins. */
+   Geometry (left/top/width/height) is set inline from the live margins.
+
+   The furniture is a *background layer*: it is layered at the bottom of the
+   sheet, behind every text/image/shape frame, so page content always paints
+   over the running head and folio (it stays legible everywhere it is not
+   covered). Master view re-raises the bands to `z-index: 6` - see
+   `.master-band.is-editable` - because there they are the things being
+   edited. */
 .master-band {
   position: absolute;
-  z-index: 3;
+  z-index: 0;
   pointer-events: none;
   user-select: none;
   font-family: 'Biome', 'Space Grotesk', 'Red Hat Text', sans-serif;
@@ -326,11 +445,13 @@ body {
   white-space: pre;
   overflow: hidden;
 }
-/* Publisher's dashed non-printing guide around each band. */
+/* Publisher's dashed non-printing guide around each band. Drawn in the house
+   orange, the same colour as the master region guide, so the whole master page
+   reads as one thing and matches the app's theme. */
 .master-band-guide {
   position: absolute;
   inset: -5px -8px;
-  border: 1px dashed #1a73e8;
+  border: 1px dashed #ea7317;
   border-radius: 2px;
   opacity: 0.75;
   pointer-events: none;
@@ -347,17 +468,77 @@ body {
   line-height: 14px;
   text-transform: uppercase;
   white-space: nowrap;
-  color: #1a73e8;
-  background: #eaf2fe;
+  color: #9a450f;
+  background: #ffe8d2;
   border-radius: 2px;
 }
 .master-band-text:empty::before {
   content: attr(data-ph);
-  color: #9aa4b2;
+  color: #b58a63;
   font-style: italic;
 }
 .master-band-text:focus {
-  background: rgba(26, 115, 232, 0.06);
+  background: rgba(234, 115, 23, 0.08);
+}
+
+/* ---- Publisher's tab stops -------------------------------------------------
+   A header or footer is ONE line with three stops: left, centre and right. A
+   band holding a tab character (the Tab key on the sheet) is laid out in three
+   equal cells whose text sits on its own stop, so a single band can carry the
+   running head on the left and the folio on the right. A band with no tab keeps
+   its own `align`, which is what the panel's align buttons set. */
+.band-stops {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  width: 100%;
+  height: 100%;
+}
+/* Wins over `.master-band.is-editable .master-band-text { display: block }`. */
+.master-band.is-editable .master-band-text.band-stops {
+  display: grid;
+}
+.band-stops > * {
+  display: block;
+  min-width: 0;
+  outline: none;
+  white-space: pre;
+  overflow: hidden;
+}
+.band-stop-left {
+  text-align: left;
+}
+.band-stop-centre {
+  text-align: center;
+}
+.band-stop-right {
+  text-align: right;
+}
+.band-stops > [data-ph]:empty::before {
+  content: attr(data-ph);
+  color: #b58a63;
+  font-style: italic;
+}
+.band-stops > :focus {
+  background: rgba(234, 115, 23, 0.08);
+}
+
+/* Master region guide - the master page's frame, drawn the way Microsoft
+   Publisher draws it: a 1px hairline in the Office pale blue, inset the same
+   distance from every side of the page so the border is symmetrical.
+
+   The running head and folio sit *outside* it, and its geometry is fixed: a
+   master page is an independent page, so nothing dragged on the rulers moves
+   it. The line is drawn in the house orange so it matches the app's theme.
+
+   It is chrome, never content: `pointer-events: none` keeps it click-through
+   so it can't swallow a click meant for the text, and the print rules drop it
+   so it never reaches paper. A double-click outside it opens the master page
+   (see `paperDoubleClick` in DocumentCanvas). */
+.master-region-guide {
+  position: absolute;
+  z-index: 2;
+  border: 1px solid rgba(234, 115, 23, 0.55);
+  pointer-events: none;
 }
 
 /* In master view the publication itself is locked: Publisher greys the page
@@ -386,13 +567,16 @@ body {
 }
 /* Keep decoration bands visually uniform regardless of the selected font.
    Use a fixed line-height on inline runs and avoid font-specific decoration
-   metrics where the browser supports them. */
+   metrics where the browser supports them. The highlighter draws a rounded
+   band (a small radius, cloned per line so a wrapped highlight keeps soft
+   ends), which is why `box-decoration-break` is set alongside it. */
 .doc-surface mark,
 .page-box-content mark,
 .doc-surface [style*="background-color"],
 .page-box-content [style*="background-color"] {
   display: inline;
   padding: 1px 0;
+  border-radius: 4px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
@@ -479,8 +663,65 @@ body {
   color: #b3aca2;
   pointer-events: none;
 }
+.page-box-content p,
+.page-box-content div {
+  margin: 0;
+}
+.page-box-content p + p {
+  margin-top: 0.4em;
+}
 
-/* Image boxes: the frame holds a picture only — never text, never editing. */
+/* Shape and line boxes: a filled rectangle (the bulletin's orange cards) and a
+   free-standing rule. Both are page objects - never text - so they never take
+   part in the text-flow engine; they just move, resize and recolour. */
+.page-box-shape {
+  background: transparent;
+  cursor: move;
+}
+.page-box-fill {
+  position: absolute;
+  inset: 0;
+}
+.page-box-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* An imported PDF page: a fixed, full-sheet frame holding the browser's PDF
+   viewer. It sits above the master furniture and the frames; it is not
+   draggable, so a drag inside it selects text the way the viewer expects. */
+.pdf-page-frame {
+  position: absolute;
+  z-index: 3;
+  background: #fff;
+}
+.pdf-page-embed {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.pdf-page-missing {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+  text-align: center;
+  color: #6f6559;
+  background: repeating-linear-gradient(
+    45deg,
+    #f6f2ec 0,
+    #f6f2ec 10px,
+    #efe9e1 10px,
+    #efe9e1 20px
+  );
+}
+
+/* Image boxes: the frame holds a picture only - never text, never editing. */
 .page-box-image {
   background: transparent;
   cursor: move;
@@ -694,18 +935,30 @@ body {
   border-color: #b9b0a4;
 }
 
-/* End-of-document tombstone: a small black rounded square tucked into the
-   bottom-right corner of the last page, clear of the margins. */
-.page-tombstone {
+/* End-of-piece marker (tombstone): a black rounded square at 24px - twice the
+   square the bulletin used to draw - tucked into the last page's bottom-right
+   corner, clear of the margins.
+
+   It is an object on the sheet, but a deliberately inert one: it never drags
+   and never resizes (there are no handles), and it is painted after the frames
+   so it always sits above the page content. Clicking selects it so Delete
+   removes it; right-clicking takes it off directly. */
+.page-tombstone-box {
   position: absolute;
-  /* Tucked into the very bottom-right corner, clear of the folio band above
-     it (the band now sits inside the bottom margin). */
-  right: 14px;
-  bottom: 10px;
-  pointer-events: none;
-  user-select: none;
-  -webkit-user-select: none;
+  z-index: 6;
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: default;
+  line-height: 0;
 }
+.page-tombstone-box:focus-visible {
+  outline: 2px solid rgba(234, 115, 23, 0.65);
+  outline-offset: 3px;
+}
+
+/* One sheet's zoom wrapper. */
 
 /* Empty-page guidance shown until the first text box is added. */
 .page-empty-hint {
@@ -740,7 +993,7 @@ body {
 }
 
 /* ------------------------------------------------------------------
-   Printing — each page sheet prints on its own piece of paper,
+   Printing - each page sheet prints on its own piece of paper,
    full-bleed and exactly as it looks on screen.
 
    App injects `@page { size: …mm …mm }` sized to the current paper +
@@ -785,6 +1038,18 @@ body {
     margin: 0 !important;
   }
 
+  /* Every sheet prints, so the zoom wrappers go back into the flow at their
+     natural size and the ones parked offscreen for the paged view return. */
+  .doc-scaler {
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    width: auto !important;
+    height: auto !important;
+    visibility: visible !important;
+    display: block !important;
+  }
+
   /* One sheet per page: exact paper size, no zoom, no shadow, no stray gap. */
   .doc-paper {
     width: var(--print-page-w, 100%) !important;
@@ -814,7 +1079,7 @@ body {
   .page-box-link-handle,
   .page-box-outline,
   .page-empty-hint,
-  /* The dashed guides only exist on screen — Publisher never prints them. */
+  /* The dashed guides only exist on screen - Publisher never prints them. */
   .master-band-guide {
     display: none !important;
   }
@@ -822,7 +1087,7 @@ body {
   .page-box-layer.is-master-layer .page-box {
     opacity: 1 !important;
   }
-  /* Master-view chrome is editing furniture only — never printed. */
+  /* Master-view chrome is editing furniture only - never printed. */
   .doc-paper.is-master {
     background: #fff !important;
     outline: none !important;
@@ -830,9 +1095,14 @@ body {
   .master-sheet-label {
     display: none !important;
   }
-  /* The bands sit inside the margins, so they must survive the print reset. */
+  /* The pale-blue master-frame guide is editing chrome: screen only. */
+  .master-region-guide {
+    display: none !important;
+  }
+  /* The bands sit outside the master frame, so they must survive the reset.
+     They stay a background layer on paper too, under the page content. */
   .master-band {
-    z-index: 3 !important;
+    z-index: 0 !important;
   }
   .page-box.is-pour-target {
     outline: none !important;

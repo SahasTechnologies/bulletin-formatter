@@ -18,6 +18,25 @@ export function registerEditor(el: HTMLElement | null) {
   editorEl = el;
 }
 
+/* ------------------------------------------------------------ undo / redo --
+ *
+ * Document history belongs to the canvas (it owns the boxes), but undo can be
+ * asked for from three places: the menu bar, the toolbar buttons and the
+ * keyboard. Rather than thread a callback through every one of them, the
+ * canvas registers its history handler here and everyone else calls into it.
+ */
+type HistoryHandler = (kind: 'undo' | 'redo') => void;
+let historyHandler: HistoryHandler | null = null;
+
+export function registerHistory(handler: HistoryHandler | null) {
+  historyHandler = handler;
+}
+
+/** Step the document history. A no-op when no canvas is mounted. */
+export function history(kind: 'undo' | 'redo') {
+  historyHandler?.(kind);
+}
+
 export function getEditor(): HTMLElement | null {
   return editorEl;
 }
@@ -86,7 +105,7 @@ export function startSelectionTracking(): () => void {
 
 /**
  * Park the caret inside the editor (start of contents) when there is no live
- * selection — e.g. a menu-driven command before the user has ever clicked into
+ * selection - e.g. a menu-driven command before the user has ever clicked into
  * the page. `exec()` and `applyInlineStyle()` both use this so font/size
  * choices with a bare caret still have somewhere to act.
  */
@@ -241,7 +260,7 @@ function wrapRange(part: Range, prop: string, value: string): HTMLElement | null
  * Style a selection that spans several blocks.
  *
  * The old implementation handed the work to `execCommand`, which only knows
- * three properties (font name, colour, highlight) — so `font-size` across two
+ * three properties (font name, colour, highlight) - so `font-size` across two
  * paragraphs was silently routed to `foreColor` and the size never changed.
  * Doing it ourselves also keeps the full font fallback stack instead of the
  * bare family `execCommand('fontName')` writes out.
@@ -271,7 +290,7 @@ function applyAcrossBlocks(
     const { block, range: part } = parts[i];
     if (!block.isConnected) continue;
     if (rangeCoversContent(part, block)) {
-      // The whole block is selected — style the block itself and drop any
+      // The whole block is selected - style the block itself and drop any
       // inline value buried inside it, otherwise the two fight each other.
       block.style.setProperty(prop, value);
       for (const child of Array.from(block.children)) stripProperty(child, prop);
@@ -303,7 +322,7 @@ function applyAcrossBlocks(
 /**
  * After stripping a property, spans that no longer carry any style (or any
  * attribute at all) are dead wrappers left behind by a previous formatting
- * pass — unwrap them so the document doesn't accumulate markup litter.
+ * pass - unwrap them so the document doesn't accumulate markup litter.
  */
 function unwrapStylelessSpans(root: DocumentFragment | Element): void {
   for (const el of Array.from(root.querySelectorAll('span'))) {
@@ -320,7 +339,7 @@ function unwrapStylelessSpans(root: DocumentFragment | Element): void {
  *
  * We compare boundary points rather than using `Selection.containsNode`,
  * because that helper only reports containment when the range boundaries sit
- * *outside* the node — a range that covers a span's whole text but starts and
+ * *outside* the node - a range that covers a span's whole text but starts and
  * ends inside it would otherwise be treated as a partial selection.
  */
 function rangeCoversContent(range: Range, el: HTMLElement): boolean {
@@ -447,7 +466,7 @@ export function applyInlineStyle(prop: string, value: string): void {
 
     // Now retire the fully-covered ancestors. Every *other* declaration they
     // carried (underline, highlight colour, weight, etc.) is moved onto `node`
-    // so changing one property does not silently strip the rest — `text-
+    // so changing one property does not silently strip the rest - `text-
     // decoration` and `background-color` do not inherit, so leaving them on a
     // separate parent span would make them disappear from the new run.
     const carry: string[] = [];
@@ -467,7 +486,7 @@ export function applyInlineStyle(prop: string, value: string): void {
         }
       }
       // An ancestor that has been reduced to nothing but a wrapper around
-      // `node` is dead weight even if it still carries a style declaration —
+      // `node` is dead weight even if it still carries a style declaration -
       // the carried styles have already been moved onto `node`, and
       // `text-decoration` does not inherit anyway, so the wrapper has nothing
       // left to contribute.
@@ -542,7 +561,7 @@ export function applyCommandStyle(command: string, value?: string): void {
 }
 
 /** Prompt-free link insertion using execCommand (keeps the selection intact).
- *  When the caret is collapsed — e.g. Ctrl+K with nothing selected — the URL
+ *  When the caret is collapsed - e.g. Ctrl+K with nothing selected - the URL
  *  itself is inserted as linked text instead of silently doing nothing. */
 export function insertLink(url: string): void {
   if (!url) return;
@@ -553,7 +572,7 @@ export function insertLink(url: string): void {
     return;
   }
   // Collapsed caret: createLink has nothing to wrap, so insert a fresh link.
-  // Built through the DOM so href and text are each escaped exactly once —
+  // Built through the DOM so href and text are each escaped exactly once -
   // hand-rolling the HTML double-escaped an `&` into a visible "&amp;".
   const a = document.createElement('a');
   a.href = safe;
@@ -608,7 +627,7 @@ export function replaceAll(query: string, replacement: string): number {
   const re = new RegExp(escaped, 'gi');
 
   // Only ever touch TEXT nodes. Rewriting `innerHTML` would happily rewrite
-  // markup too — replacing the single letter "p" would shred every <p> tag and
+  // markup too - replacing the single letter "p" would shred every <p> tag and
   // every `p` inside an attribute, corrupting the document.
   const walker = document.createTreeWalker(editorEl, NodeFilter.SHOW_TEXT);
   const nodes: Text[] = [];
@@ -620,7 +639,7 @@ export function replaceAll(query: string, replacement: string): number {
     const hits = node.data.match(re);
     if (!hits) continue;
     count += hits.length;
-    // Assigning to `data` is a literal replacement — no `$&` expansion to
+    // Assigning to `data` is a literal replacement - no `$&` expansion to
     // escape, and no markup can be produced by the replacement text.
     node.data = node.data.replace(re, replacement);
   }
@@ -681,15 +700,6 @@ export function transformSelectionCase(mode: 'lower' | 'upper' | 'title'): void 
         ? text.toUpperCase()
         : text.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase());
   exec('insertText', t);
-}
-
-/** Newspaper-style column layout for the whole page (1–3 columns). */
-export function setColumnCount(count: number): void {
-  if (!editorEl) return;
-  editorEl.style.columnCount = count > 1 ? String(count) : '';
-  editorEl.style.columnGap = '40px';
-  editorEl.style.columnRule = count > 1 ? '1px solid #e5ddd5' : '';
-  captureSelection();
 }
 
 export function findAndSelect(query: string): number {

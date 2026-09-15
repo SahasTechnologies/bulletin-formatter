@@ -1,5 +1,5 @@
 /**
- * The proprietary `.bulletin` file format — a small JSON wrapper around the
+ * The proprietary `.bulletin` file format - a small JSON wrapper around the
  * document's HTML. Kept deliberately separate from storage so the on-disk file
  * and the localStorage copy stay in sync by construction.
  */
@@ -17,8 +17,12 @@ export interface BulletinDoc {
   template?: string;
   /** Text boxes (frames) serialized as JSON, when the document uses them. */
   boxes?: string;
-  /** Show the end-of-document tombstone (small black square, last page). */
+  /** Show the end-of-document tombstone (small black square, last page).
+      @deprecated the marker is a frame on the last sheet now; kept so files
+      written by older builds still open. */
   tombstone?: boolean;
+  /** Per-page names, serialized as a JSON array (index = page number - 1). */
+  pageNames?: string;
   /** The master page (header/footer furniture), serialized as JSON. */
   master?: string;
   /** Legacy pre-master-page header text (tokens: @page @month @year). */
@@ -51,6 +55,7 @@ export function parseBulletin(raw: string): BulletinDoc | null {
       template: typeof data.template === 'string' ? data.template : undefined,
       boxes: typeof data.boxes === 'string' ? data.boxes : undefined,
       tombstone: data.tombstone === true,
+      pageNames: typeof data.pageNames === 'string' ? data.pageNames : undefined,
       master: typeof data.master === 'string' ? data.master : undefined,
       masterHeader: typeof data.masterHeader === 'string' ? data.masterHeader : undefined,
       masterFooter: typeof data.masterFooter === 'string' ? data.masterFooter : undefined,

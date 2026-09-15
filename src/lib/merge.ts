@@ -1,20 +1,23 @@
 /**
  * Merging several `.bulletin` files into one issue.
  *
- * The Design Bible fixes the running order of an issue — cover at the front,
- * end page/credits at the bottom — so Merge reorders whatever it is handed to
+ * The Design Bible fixes the running order of an issue - cover at the front,
+ * end page/credits at the bottom - so Merge reorders whatever it is handed to
  * match, then writes a Page of Contents listing each part with the page it
  * starts on.
  */
-import { DEFAULT_MARGINS, splitIntoBoxes } from '../components/DocumentCanvas';
+import { splitIntoBoxes } from '../components/DocumentCanvas';
 import { parseBulletin, type BulletinDoc } from './format';
 
-/** A4 portrait — the page every bulletin is laid out for. */
+/** A4 portrait - the page every bulletin is laid out for. */
 const PAGE = { width: 794, height: 1123 };
-const MARGIN_X = DEFAULT_MARGINS.left;
-const MARGIN_Y = DEFAULT_MARGINS.top;
-const CONTENT_W = PAGE.width - MARGIN_X * 2;
-const CONTENT_H = PAGE.height - MARGIN_Y * 2;
+/* The area Merge lays its frames out in. The editor has no margins - a frame
+   may sit anywhere - so this is simply the geometry the merged issue uses,
+   matching the bulletin templates. */
+const CONTENT_X = 96;
+const CONTENT_Y = 80;
+const CONTENT_W = PAGE.width - CONTENT_X * 2;
+const CONTENT_H = PAGE.height - CONTENT_Y * 2;
 
 export type IssuePartKind =
   | 'cover'
@@ -56,6 +59,9 @@ export interface MergeResult {
   content: string;
   boxes: string;
   entries: MergeEntry[];
+  /** Sheets the merged issue spans. A part can cover several pages, so this is
+      not `entries.length` - the dialog reports it verbatim. */
+  pageCount: number;
 }
 
 /** Map a saved document back onto the page type it was made from. */
@@ -74,7 +80,6 @@ function kindOf(doc: BulletinDoc): IssuePartKind {
     case 'bulletin-endpage':
       return 'end';
     case 'bulletin-article':
-    case 'bulletin-continuation':
       return 'article';
     default:
       break;
@@ -102,7 +107,7 @@ export async function readMergeInputs(files: File[]): Promise<MergeInput[]> {
         kind: kindOf(doc),
       });
     } catch {
-      /* unreadable file — leave it out of the merge */
+      /* unreadable file - leave it out of the merge */
     }
   }
   return out;
@@ -118,7 +123,7 @@ function partBoxes(doc: BulletinDoc): Array<Record<string, unknown>> {
       /* fall through and re-split from the HTML */
     }
   }
-  return splitIntoBoxes(doc.content, PAGE, DEFAULT_MARGINS) as unknown as Array<
+  return splitIntoBoxes(doc.content, PAGE) as unknown as Array<
     Record<string, unknown>
   >;
 }
@@ -141,17 +146,58 @@ const KIND_LABEL: Record<IssuePartKind, string> = {
   other: 'Page',
 };
 
-/** Build the two-column Page of Contents in the house style. */
-export function contentsHtml(entries: MergeEntry[]): string {
+/* ---- Page of Contents geometry -------------------------------------------
+   The A4 print area is `CONTENT_W` × `CONTENT_H`; the text frame pads 4px, so a
+   sheet has ~955px of room. The 48pt title and its rule eat ~88px, and one
+   entry is two 18pt lines (~60px) plus whatever spacing we give it. The spacing
+   is solved per sheet: it opens up until a full sheet of entries reaches the
+   bottom margin (the 62px the printable template uses), and tightens again when
+   an issue has so many parts that the list needs a second sheet. */
+const CONTENTS_HEIGHT = CONTENT_H - 8;
+const CONTENTS_TOP = 88;
+const CONTENTS_ENTRY_TEXT = 60;
+const CONTENTS_ENTRIES_PER_COLUMN = 7;
+const CONTENTS_ENTRIES_PER_SHEET = CONTENTS_ENTRIES_PER_COLUMN * 2;
+
+/** The 48pt heading every contents sheet opens with. */
+const CONTENTS_HEADING = `<p style="margin:0;padding:10px 0 6px;text-align:center;font-family:'Franklin Gothic Heavy','Libre Franklin',Arial,sans-serif;font-size:48pt;line-height:1.05;color:#3f3f3f;column-span:all;">Page of Contents</p>`;
+
+/** How many contents sheets a list of this length needs (at least one). */
+export function contentsSheetCount(entryCount: number): number {
+  return Math.max(1, Math.ceil(entryCount / CONTENTS_ENTRIES_PER_SHEET));
+}
+
+/** One contents sheet: heading, rule and its entries, spaced to reach the
+    bottom margin. Sheets after the first say so under the heading. */
+function contentsSheetHtml(entries: MergeEntry[], continued: boolean): string {
+  const perColumn = Math.max(1, Math.ceil(entries.length / 2));
+  const room = CONTENTS_HEIGHT - CONTENTS_TOP - (continued ? 30 : 0);
+  const pad = Math.max(6, Math.min(62, Math.round(room / perColumn) - CONTENTS_ENTRY_TEXT));
   const rows = entries
     .map(
       (e) =>
-        `<p style="margin:0;padding-top:20px;text-align:center;font-family:'Franklin Gothic Heavy','Libre Franklin',Arial,sans-serif;font-size:18pt;line-height:1.25;color:#3f3f3f;break-inside:avoid;"><b>${e.page} &mdash; ${KIND_LABEL[e.kind]}</b><br/><span style="font-family:'Franklin Gothic Medium','Libre Franklin',Arial,sans-serif;color:#262626;">${escapeHtml(e.title)}</span></p>`,
+        `<p style="margin:0;padding-top:${pad}px;text-align:center;font-family:'Franklin Gothic Heavy','Libre Franklin',Arial,sans-serif;font-size:18pt;line-height:1.25;color:#3f3f3f;break-inside:avoid;"><b>${e.page} - ${KIND_LABEL[e.kind]}</b><br/><span style="font-family:'Franklin Gothic Medium','Libre Franklin',Arial,sans-serif;color:#262626;">${escapeHtml(e.title)}</span></p>`,
     )
     .join('\n');
-  return `<p style="margin:0;padding:10px 0 6px;text-align:center;font-family:'Franklin Gothic Heavy','Libre Franklin',Arial,sans-serif;font-size:48pt;line-height:1.05;color:#3f3f3f;column-span:all;">Page of Contents</p>
-<hr style="margin:0;border:0;border-top:1px solid #d9d3c9;column-span:all;" />
-${rows}`;
+  const sub = continued
+    ? `\n<p style="margin:0;padding:0;text-align:center;font-family:'Franklin Gothic Medium','Libre Franklin',Arial,sans-serif;font-size:18pt;line-height:1.25;color:#808080;column-span:all;">continued</p>`
+    : '';
+  return `${CONTENTS_HEADING}${sub}\n<hr style="margin:${continued ? '6px' : '0'} 0 0;border:0;border-top:1px solid #d9d3c9;column-span:all;" />\n${rows}`;
+}
+
+/** The two-column Page of Contents in the house style - one sheet, or two when
+    the issue is long enough to need them. */
+export function contentsSheets(entries: MergeEntry[]): string[] {
+  const pages = contentsSheetCount(entries.length);
+  const perPage = Math.ceil(entries.length / pages);
+  return Array.from({ length: pages }, (_, i) =>
+    contentsSheetHtml(entries.slice(i * perPage, (i + 1) * perPage), i > 0),
+  );
+}
+
+/** The (first) contents page as a single HTML string. */
+export function contentsHtml(entries: MergeEntry[]): string {
+  return contentsSheets(entries)[0] ?? '';
 }
 
 /**
@@ -173,9 +219,13 @@ export function mergeIssue(inputs: MergeInput[], opts: MergeOptions): MergeResul
 
   const ordered: MergeInput[] = [...front, ...body, ...back, ...tail];
   const wantContents = opts.makeContents && importedContents.length === 0;
+  // The generated list starts on the page after the covers and is counted
+  // before the numbering pass: every part plus the contents page itself is one
+  // entry, and a long issue spills onto a second contents sheet.
+  const contentsPages = wantContents ? contentsSheetCount(ordered.length + 1) : 0;
 
-  // Page 1 is the cover; a generated contents page occupies one page after
-  // the covers. Everything after that shifts down by one.
+  // Page 1 is the cover; the generated contents occupies `contentsPages`
+  // pages after the covers. Everything after that shifts down by that much.
   const contentsAt = front.length;
   let page = 1;
   const spans = new Map<MergeInput, number>();
@@ -183,7 +233,7 @@ export function mergeIssue(inputs: MergeInput[], opts: MergeOptions): MergeResul
 
   const take = (part: MergeInput | null, isContents: boolean) => {
     if (!part) {
-      if (isContents) page += 1;
+      if (isContents) page += contentsPages;
       return;
     }
     const span = partSpan(part.doc);
@@ -216,12 +266,12 @@ export function mergeIssue(inputs: MergeInput[], opts: MergeOptions): MergeResul
       }
       cursor += boxes.reduce((max, b) => Math.max(max, Number(b.pageIndex ?? 0)), 0) + 1;
     } else {
-      // Nothing to place (an empty document) — still give it a page.
+      // Nothing to place (an empty document) - still give it a page.
       allBoxes.push({
         id: `m-empty-${allBoxes.length}`,
         pageIndex: cursor,
-        x: MARGIN_X,
-        y: MARGIN_Y,
+        x: CONTENT_X,
+        y: CONTENT_Y,
         w: CONTENT_W,
         h: CONTENT_H,
         html,
@@ -236,45 +286,37 @@ export function mergeIssue(inputs: MergeInput[], opts: MergeOptions): MergeResul
     }
   };
 
-  ordered.forEach((part, i) => {
-    if (wantContents && i === contentsAt) {
-      place(contentsHtml(entries), [
+  /** Lay down every contents sheet, one full-page two-column frame each. */
+  const placeContents = () => {
+    for (const sheet of contentsSheets(entries)) {
+      place(sheet, [
         {
-          id: 'contents',
+          id: `contents-${allBoxes.length}`,
           pageIndex: 0,
-          x: MARGIN_X,
-          y: MARGIN_Y,
+          x: CONTENT_X,
+          y: CONTENT_Y,
           w: CONTENT_W,
           h: CONTENT_H,
-          html: contentsHtml(entries),
+          html: sheet,
           columns: 2,
           nextId: null,
         },
       ]);
     }
+  };
+
+  ordered.forEach((part, i) => {
+    if (wantContents && i === contentsAt) placeContents();
     place(part.doc.content, partBoxes(part.doc));
   });
-  if (wantContents && contentsAt >= ordered.length) {
-    place(contentsHtml(entries), [
-      {
-        id: 'contents',
-        pageIndex: 0,
-        x: MARGIN_X,
-        y: MARGIN_Y,
-        w: CONTENT_W,
-        h: CONTENT_H,
-        html: contentsHtml(entries),
-        columns: 2,
-        nextId: null,
-      },
-    ]);
-  }
+  if (wantContents && contentsAt >= ordered.length) placeContents();
 
   return {
     title: opts.title || 'Merged issue',
     content: htmlParts.join('<div style="page-break-after:always"></div>'),
     boxes: JSON.stringify(allBoxes),
     entries,
+    pageCount: Math.max(1, cursor),
   };
 }
 

@@ -1,7 +1,7 @@
 /**
  * Text-box ("frame") model and the story-flow engine.
  *
- * Publisher semantics: text never lives on the page itself — it lives in
+ * Publisher semantics: text never lives on the page itself - it lives in
  * frames. A chain of linked frames shares one *story*; each frame shows the
  * slice of that story that fits its geometry. When the last frame in a chain
  * still cannot show everything, it is in overflow: it tints red and offers a
@@ -108,7 +108,7 @@ let measurer: HTMLDivElement | null = null;
  *
  * Pieces are measured inside an `overflow:hidden` inner wrapper: it creates a
  * block formatting context, so the last block's bottom margin is INCLUDED in
- * the measured height — exactly how a real frame's scrollHeight accounts for
+ * the measured height - exactly how a real frame's scrollHeight accounts for
  * it. Without this, the measurer and the live DOM disagree by one margin and
  * a frame at its boundary flips between "fits" and "overflowing".
  */
@@ -437,7 +437,7 @@ export function flowStory(
   for (const box of boxes) {
     const cols = Math.max(1, box.columns);
     // Only the frame's TOP padding offsets the text (the bottom pad is
-    // scroll allowance), so subtract that plus a 2px safety line — this
+    // scroll allowance), so subtract that plus a 2px safety line - this
     // mirrors the live red-chrome test (scrollHeight vs clientHeight).
     const innerW = Math.max(40, box.w - FRAME_PAD * 2);
     const capacity = Math.max(20, box.h - FRAME_PAD - 2) * cols;
@@ -468,7 +468,7 @@ export function flowStory(
 
       // A leading margin on the block is cancelled by the frame's padding in
       // the real frame (margins collapse into it), so tolerate one margin of
-      // slack — otherwise a half-empty frame “cannot fit” even one line.
+      // slack - otherwise a half-empty frame “cannot fit” even one line.
       if (hAfter <= capacity) {
         used = hAfter;
         taken.push(piece);
@@ -502,7 +502,7 @@ export function flowStory(
 
   // Never destroy text: whatever no frame could take stays appended to the
   // last slice. It renders clipped there (and flags the frame red), so the
-  // story survives — a later resize simply redistributes it again.
+  // story survives - a later resize simply redistributes it again.
   if (overflow && slices.length) {
     let leftover = carry ?? '';
     while (bi < blocks.length) leftover += blocks[bi++];
@@ -516,7 +516,7 @@ export function flowStory(
 
 /**
  * Character offset of the caret within `root`'s text, so a reflow can put the
- * caret back — possibly in a different frame when text has moved downstream.
+ * caret back - possibly in a different frame when text has moved downstream.
  */
 export function caretOffsetIn(root: HTMLElement): number | null {
   const sel = window.getSelection();
@@ -589,7 +589,7 @@ export function emptyDoc({ pageW, pageH, marginX = 96, marginY = 80 }: PageGeom)
   const bodyStory: Story = {
     id: newId('s'),
     html:
-      '<p style="margin:0 0 12px;">Start writing here. When a frame can no longer fit your text it turns red &mdash; click the link handle on its edge, then click anywhere on a page to flow the remainder into a new frame.</p>',
+      '<p style="margin:0 0 12px;">Start writing here. When a frame can no longer fit your text it turns red - click the link handle on its edge, then click anywhere on a page to flow the remainder into a new frame.</p>',
   };
 
   return {

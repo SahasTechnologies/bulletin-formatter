@@ -1,11 +1,12 @@
 /**
  * Persistence for recently-opened documents.
  *
- * Documents are stored as a flat JSON array under a single key. The most
- * recently-edited document is always first, and the list is capped so it never
- * grows without bound. Each entry keeps the full HTML content so a document can
- * be reopened exactly as it was left.
+ * Documents are stored as a flat JSON array under a single key. Heavy binary
+ * data (images, PDFs) are moved into IndexedDB (`mediaStore`) with lightweight
+ * `asset:<id>` references, ensuring localStorage never hits the ~5MB quota.
  */
+
+import { saveMediaDataUrl, newAssetId } from './mediaStore';
 
 export interface StoredDocument {
   id: string;
@@ -20,8 +21,12 @@ export interface StoredDocument {
    * documents whose whole page is one flat HTML blob (migrated on open).
    */
   boxes?: string;
-  /** Show the end-of-document tombstone (small black square, last page). */
+  /** Show the end-of-document tombstone (small black square, last page).
+      @deprecated the marker is a frame on the last sheet now; kept so saved
+      documents from older builds still open. */
   tombstone?: boolean;
+  /** Per-page names, serialized as a JSON array (index = page number - 1). */
+  pageNames?: string;
   /** The master page (header/footer furniture), serialized as JSON. */
   master?: string;
   /** @deprecated pre-master-page header text (tokens: @page @month @year).
@@ -45,6 +50,30 @@ const isDoc = (value: unknown): value is StoredDocument => {
   );
 };
 
+/**
+ * Scan boxes JSON and offload any embedded data URLs (images/PDFs) to IndexedDB,
+ * storing lightweight asset references instead to prevent quota overflow.
+ */
+export function sanitizeBoxesForStorage(boxesJson?: string): string | undefined {
+  if (!boxesJson || !boxesJson.includes('data:')) return boxesJson;
+  try {
+    const list = JSON.parse(boxesJson);
+    if (!Array.isArray(list)) return boxesJson;
+    let modified = false;
+    for (const b of list) {
+      if (typeof b?.src === 'string' && b.src.startsWith('data:')) {
+        const id = newAssetId(b.kind === 'pdf' ? 'pdf' : 'img');
+        void saveMediaDataUrl(id, b.src);
+        b.src = id;
+        modified = true;
+      }
+    }
+    return modified ? JSON.stringify(list) : boxesJson;
+  } catch {
+    return boxesJson;
+  }
+}
+
 /** Read the whole recent list, newest first. Invalid entries are dropped. */
 export function loadRecentDocs(): StoredDocument[] {
   try {
@@ -62,18 +91,31 @@ export function loadRecentDocs(): StoredDocument[] {
 function saveDocs(docs: StoredDocument[]) {
   try {
     localStorage.setItem(KEY, JSON.stringify(docs.slice(0, MAX)));
-  } catch {
-    /* storage full or unavailable — non-fatal */
+  } catch (err) {
+    console.warn('Failed to save to localStorage, attempting aggressive sanitization:', err);
+    try {
+      const sanitized = docs.slice(0, MAX).map((d) => ({
+        ...d,
+        boxes: sanitizeBoxesForStorage(d.boxes),
+      }));
+      localStorage.setItem(KEY, JSON.stringify(sanitized));
+    } catch {
+      /* storage full or unavailable - non-fatal */
+    }
   }
 }
 
 /**
  * Upsert a document (by id), moving it to the front and stamping the
- * timestamp. Returns the new list.
+ * timestamp. Offloads heavy images to IndexedDB.
  */
 export function saveDoc(doc: StoredDocument): StoredDocument[] {
-  const docs = loadRecentDocs().filter((d) => d.id !== doc.id);
-  docs.unshift(doc);
+  const sanitizedDoc: StoredDocument = {
+    ...doc,
+    boxes: sanitizeBoxesForStorage(doc.boxes),
+  };
+  const docs = loadRecentDocs().filter((d) => d.id !== sanitizedDoc.id);
+  docs.unshift(sanitizedDoc);
   saveDocs(docs);
   return docs.slice(0, MAX);
 }
@@ -82,7 +124,18 @@ export function saveDoc(doc: StoredDocument): StoredDocument[] {
 export function deleteDoc(id: string): StoredDocument[] {
   const docs = loadRecentDocs().filter((d) => d.id !== id);
   saveDocs(docs);
-  return docs;
+  return docs.slice(0, MAX);
+}
+
+/** Rename a saved document in place (title only; nothing else changes).
+    Returns the new list, or the old one when the id is unknown. */
+export function renameDoc(id: string, title: string): StoredDocument[] {
+  const docs = loadRecentDocs();
+  const hit = docs.find((d) => d.id === id);
+  if (!hit) return docs;
+  hit.title = title;
+  saveDocs(docs);
+  return docs.slice(0, MAX);
 }
 
 /** Look up a single document by id. */
@@ -91,7 +144,7 @@ export function getDoc(id: string): StoredDocument | undefined {
 }
 
 /**
- * Version history — an automatic snapshot is appended every time a document
+ * Version history - an automatic snapshot is appended every time a document
  * is saved if it has changed enough since the previous snapshot. Capped at
  * 10 snapshots per document, oldest first.
  */
@@ -124,7 +177,7 @@ function saveVersions(all: Record<string, DocVersion[]>) {
   try {
     localStorage.setItem(VERSIONS_KEY, JSON.stringify(all));
   } catch {
-    /* storage full or unavailable — non-fatal */
+    /* storage full or unavailable - non-fatal */
   }
 }
 
@@ -147,7 +200,8 @@ export function recordVersion(
   const list = all[id] ?? [];
   const last = list[list.length - 1];
   if (last && Math.abs(words - last.words) < VERSION_MIN_DELTA) return;
-  list.push({ at: Date.now(), words, content, boxes });
+  const cleanBoxes = sanitizeBoxesForStorage(boxes);
+  list.push({ at: Date.now(), words, content, boxes: cleanBoxes });
   all[id] = list.slice(-VERSIONS_PER_DOC);
   saveVersions(all);
 }

@@ -7,38 +7,49 @@ import {
   Eye,
   EyeOff,
   Hash,
+  Pencil,
   PlusSquare,
   Trash2,
   X,
 } from 'lucide-react';
-import type { MasterPage } from '../lib/master';
+import {
+  defaultDescription,
+  newMaster,
+  nextMasterId,
+  sanitizeId,
+  type MasterDef,
+  type MasterSet,
+} from '../lib/master';
 
 /**
- * The **Master Pages** contextual ribbon — Publisher shows it above the sheet
- * while View > Master Page is on. Two groups mirror the Microsoft Publisher
- * tab: *Master Page* (which variants exist) and *Header & Footer* (the
- * furniture itself).
+ * The **Master Page** contextual tab - Publisher shows it above the sheet while
+ * View > Master Page is on. Its groups mirror the Microsoft Publisher tab:
+ * *Master Page* (which masters exist and who they are applied to),
+ * *Header & Footer* (the furniture itself) and *Close*.
  *
- * Every control here performs a real edit on the master; the page picks it up
+ * Every control performs a real edit on the master set; the pages pick it up
  * through `onChange`.
  */
 export default function MasterSection({
-  master,
+  set,
   onChange,
   onInsertToken,
   onClose,
-  headerFooterVisible,
   onToggleHeaderFooter,
+  pageCount,
 }: {
-  master: MasterPage;
-  onChange: (patch: (m: MasterPage) => MasterPage) => void;
+  set: MasterSet;
+  onChange: (patch: (set: MasterSet) => MasterSet) => void;
   /** Drop a field token into the band the user is editing. */
   onInsertToken: (token: string) => void;
   onClose: () => void;
-  headerFooterVisible: boolean;
   onToggleHeaderFooter: () => void;
+  /** Sheets in the publication - lets Apply To offer the whole range. */
+  pageCount: number;
 }) {
   const [applyOpen, setApplyOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   const applyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -50,148 +61,420 @@ export default function MasterSection({
     return () => window.removeEventListener('mousedown', close);
   }, [applyOpen]);
 
-  /** Copy the default bands into every variant so they start from the same
-      running head rather than from nothing. */
-  const duplicate = () =>
-    onChange((m) => ({
-      ...m,
-      firstHeader: { ...m.header },
-      firstFooter: { ...m.footer },
-      evenHeader: { ...m.header },
-      evenFooter: { ...m.footer },
-    }));
+  const active = set.masters.find((m) => m.id === set.activeId) ?? set.masters[0];
 
-  const clearAll = () => {
-    if (!window.confirm('Delete the master-page furniture? Every running head and folio is cleared.')) return;
-    onChange((m) => ({
-      ...m,
-      header: { ...m.header, text: '' },
-      footer: { ...m.footer, text: '' },
-      firstHeader: { ...m.firstHeader, text: '' },
-      firstFooter: { ...m.firstFooter, text: '' },
-      evenHeader: { ...m.evenHeader, text: '' },
-      evenFooter: { ...m.evenFooter, text: '' },
+  /** Publisher's Two Page Master: warn before the left sheet is dropped. */
+  const toggleTwoPage = () => {
+    if (!active) return;
+    if (
+      active.twoPage &&
+      !window.confirm(
+        `Make master ${active.id} a one-page master? The furniture on its left (even) sheet will be removed and replaced by the right sheet's.`,
+      )
+    ) {
+      return;
+    }
+    onChange((s) => ({
+      ...s,
+      masters: s.masters.map((m) => (m.id === active.id ? { ...m, twoPage: !m.twoPage } : m)),
     }));
   };
 
-  return (
-    <div className="no-print flex flex-none flex-wrap items-stretch gap-x-5 gap-y-2 border-b border-gdoc-border bg-[#faf7f4] px-3 py-2">
-      {/* ---- Master Page ---- */}
-      <RibbonGroup label="Master Page">
-        <RibbonBtn
-          icon={<PlusSquare size={16} />}
-          label="Add Master Page"
-          active={master.differentFirstPage}
-          title="Give page 1 its own running head and folio"
-          onClick={() => onChange((m) => ({ ...m, differentFirstPage: !m.differentFirstPage }))}
-        />
-        <RibbonBtn
-          icon={<Columns size={16} />}
-          label="Two-Page Master"
-          active={master.differentOddEven}
-          title="Give even pages their own running head and folio"
-          onClick={() => onChange((m) => ({ ...m, differentOddEven: !m.differentOddEven }))}
-        />
+  const duplicate = () => {
+    if (!active) return;
+    const id = nextMasterId(set);
+    onChange((s) => {
+      const src = s.masters.find((m) => m.id === active.id);
+      if (!src) return s;
+      const copy: MasterDef = {
+        ...src,
+        id,
+        description: defaultDescription(id),
+        right: { header: { ...src.right.header }, footer: { ...src.right.footer } },
+        left: { header: { ...src.left.header }, footer: { ...src.left.footer } },
+      };
+      return { ...s, masters: [...s.masters, copy], activeId: id };
+    });
+  };
 
-        <div ref={applyRef} className="relative flex">
+  const remove = () => {
+    if (!active) return;
+    if (set.masters.length <= 1) {
+      window.alert('A publication needs at least one master page.');
+      return;
+    }
+    const fallback = set.masters.find((m) => m.id !== active.id);
+    if (
+      !window.confirm(
+        `Delete master page ${active.id}? Any page using it will be given master page ${fallback?.id ?? 'A'} instead.`,
+      )
+    ) {
+      return;
+    }
+    onChange((s) => {
+      const assignment: Record<string, string> = {};
+      for (const [page, id] of Object.entries(s.assignment)) {
+        assignment[page] = id === active.id ? fallback?.id ?? 'A' : id;
+      }
+      const masters = s.masters.filter((m) => m.id !== active.id);
+      return { ...s, masters, assignment, activeId: masters[0]?.id ?? 'A' };
+    });
+  };
+
+  return (
+    /* Publisher's contextual tab is one strip: the button groups on the left,
+       a hairline between each pair, and Close Master Page pinned to the right
+       of the same row. */
+    <div className="no-print flex flex-none items-stretch gap-2 border-b border-gdoc-border bg-[#faf7f4] px-3 py-2">
+      <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-1 gap-y-2">
+        {/* ---- Master Page ---- */}
+        <RibbonGroup label="Master Page">
+          <RibbonBtn
+            icon={<PlusSquare size={16} />}
+            label="Add Master Page"
+            title="Create another master page, with its own Page ID and description"
+            onClick={() => setAddOpen(true)}
+          />
+          <RibbonBtn
+            icon={<Columns size={16} />}
+            label="Two-Page Master"
+            active={active?.twoPage === true}
+            title="Make this master a facing spread: a left and a right sheet, each with its own furniture"
+            onClick={toggleTwoPage}
+          />
+
+          <div ref={applyRef} className="relative flex">
+            <RibbonBtn
+              icon={<Copy size={16} />}
+              label="Apply To"
+              title="Apply this master to pages"
+              onClick={() => setApplyOpen((o) => !o)}
+            />
+            {applyOpen && (
+              <div className="dropdown absolute left-0 top-full z-40 mt-1 w-60 rounded-md border border-gdoc-border bg-white py-1 text-[13px] shadow-lg">
+                <ApplyRow
+                  label="Apply to all pages"
+                  hint="Every page, including any added later"
+                  onClick={() => {
+                    setApplyOpen(false);
+                    onChange((s) => ({ ...s, assignment: { '*': s.activeId } }));
+                  }}
+                />
+                <ApplyRow
+                  label="Apply to current page"
+                  hint="Only the page you were last on"
+                  onClick={() => {
+                    setApplyOpen(false);
+                    onChange((s) => ({
+                      ...s,
+                      assignment: { ...s.assignment, '0': s.activeId },
+                    }));
+                  }}
+                />
+                <ApplyRow
+                  label="Apply to pages…"
+                  hint={`A range, 1–${Math.max(1, pageCount)}`}
+                  onClick={() => {
+                    setApplyOpen(false);
+                    const raw = window.prompt(
+                      `Apply master page ${set.activeId} to which pages? (e.g. 2-5, or 3)`,
+                      `1-${Math.max(1, pageCount)}`,
+                    );
+                    if (!raw) return;
+                    const pages = parsePageRange(raw, pageCount);
+                    if (!pages.length) {
+                      window.alert('That is not a page range - try something like 2-5.');
+                      return;
+                    }
+                    onChange((s) => {
+                      const assignment = { ...s.assignment };
+                      for (const p of pages) assignment[String(p)] = s.activeId;
+                      return { ...s, assignment };
+                    });
+                  }}
+                />
+                <ApplyRow
+                  label="Apply no master"
+                  hint="Leave the pages bare"
+                  onClick={() => {
+                    setApplyOpen(false);
+                    onChange((s) => ({ ...s, assignment: { '*': 'none' } }));
+                  }}
+                />
+              </div>
+            )}
+          </div>
+
+          <RibbonBtn
+            icon={<Pencil size={16} />}
+            label="Rename"
+            title="Change this master's Page ID and description"
+            onClick={() => setRenameOpen(true)}
+          />
           <RibbonBtn
             icon={<Copy size={16} />}
-            label="Apply To"
-            title="Apply this master to a set of pages"
-            onClick={() => setApplyOpen((o) => !o)}
+            label="Duplicate"
+            title="Copy this master page under a new Page ID"
+            onClick={duplicate}
           />
-          {applyOpen && (
-            <div className="dropdown absolute left-0 top-full z-40 mt-1 w-56 rounded-md border border-gdoc-border bg-white py-1 text-[13px] shadow-lg">
-              <button
-                onClick={() => {
-                  setApplyOpen(false);
-                  onChange((m) => ({ ...m, differentFirstPage: false, differentOddEven: false }));
-                }}
-                className="block w-full px-3 py-1.5 text-left hover:bg-gdoc-hover"
-              >
-                All pages
-              </button>
-              <button
-                onClick={() => {
-                  setApplyOpen(false);
-                  onChange((m) => ({ ...m, differentOddEven: true }));
-                }}
-                className="block w-full px-3 py-1.5 text-left hover:bg-gdoc-hover"
-              >
-                Odd &amp; even pages
-              </button>
-              <button
-                onClick={() => {
-                  setApplyOpen(false);
-                  onChange((m) => ({ ...m, differentFirstPage: true }));
-                }}
-                className="block w-full px-3 py-1.5 text-left hover:bg-gdoc-hover"
-              >
-                First page only
-              </button>
-            </div>
-          )}
-        </div>
+          <RibbonBtn
+            icon={<Trash2 size={16} />}
+            label="Delete"
+            danger
+            title="Delete this master page"
+            onClick={remove}
+          />
+        </RibbonGroup>
 
-        <RibbonBtn
-          icon={<Copy size={16} />}
-          label="Duplicate"
-          title="Copy the default running head and folio into every variant"
-          onClick={duplicate}
-        />
-        <RibbonBtn
-          icon={<Trash2 size={16} />}
-          label="Delete"
-          danger
-          title="Clear every band on the master"
-          onClick={clearAll}
-        />
-      </RibbonGroup>
+        <GroupDivider />
 
-      {/* ---- Header & Footer ---- */}
-      <RibbonGroup label="Header & Footer">
-        <RibbonBtn
-          icon={headerFooterVisible ? <Eye size={16} /> : <EyeOff size={16} />}
-          label="Show Header/Footer"
-          active={headerFooterVisible}
-          title="Show or hide the furniture on every page"
-          onClick={onToggleHeaderFooter}
-        />
-        <RibbonBtn
-          icon={<Hash size={16} />}
-          label="Page Number"
-          title="Insert the page-number field into the focused band"
-          onClick={() => onInsertToken('@page')}
-        />
-        <RibbonBtn
-          icon={<Calendar size={16} />}
-          label="Insert Date"
-          title="Insert today's date into the focused band"
-          onClick={() => onInsertToken('@date')}
-        />
-        <RibbonBtn
-          icon={<Clock size={16} />}
-          label="Insert Time"
-          title="Insert the current time into the focused band"
-          onClick={() => onInsertToken('@time')}
-        />
-      </RibbonGroup>
+        {/* ---- Header & Footer ---- */}
+        <RibbonGroup label="Header & Footer">
+          <RibbonBtn
+            icon={active?.headerFooterVisible === false ? <EyeOff size={16} /> : <Eye size={16} />}
+            label="Show Header/Footer"
+            active={active?.headerFooterVisible !== false}
+            title="Show or hide this master's furniture on every page it dresses"
+            onClick={onToggleHeaderFooter}
+          />
+          <RibbonBtn
+            icon={<Hash size={16} />}
+            label="Insert Page Number"
+            title="Insert the page-number field into the focused band"
+            onClick={() => onInsertToken('@page')}
+          />
+          <RibbonBtn
+            icon={<Calendar size={16} />}
+            label="Insert Date"
+            title="Insert today's date into the focused band"
+            onClick={() => onInsertToken('@date')}
+          />
+          <RibbonBtn
+            icon={<Clock size={16} />}
+            label="Insert Time"
+            title="Insert the current time into the focused band"
+            onClick={() => onInsertToken('@time')}
+          />
+        </RibbonGroup>
+      </div>
 
       <button
         onClick={onClose}
-        className="ml-auto flex items-center gap-1.5 self-end rounded px-2 py-1 text-[12px] font-medium text-gdoc-muted hover:bg-gdoc-hover hover:text-[#2b2622]"
+        className="flex flex-none items-center gap-1.5 self-start rounded px-2 py-1 text-[12px] font-medium text-gdoc-muted hover:bg-gdoc-hover hover:text-[#2b2622]"
         title="Close master page"
       >
         <X size={14} />
         Close Master Page
       </button>
+
+      {addOpen && (
+        <MasterDialog
+          title="New master page"
+          subtitle="Publisher gives every master a one-character Page ID."
+          submitLabel="Create"
+          initialId={nextMasterId(set)}
+          initialDescription={defaultDescription(nextMasterId(set))}
+          twoPageChoice
+          onCancel={() => setAddOpen(false)}
+          onSubmit={(id, description, twoPage) => {
+            const clean = sanitizeId(id);
+            if (!clean) return;
+            // Publisher refuses a Page ID that is already taken.
+            if (set.masters.some((m) => m.id === clean)) {
+              window.alert(`Master page ${clean} already exists - pick another Page ID.`);
+              return;
+            }
+            setAddOpen(false);
+            onChange((s) => ({
+              ...s,
+              masters: [...s.masters, newMaster(clean, description, twoPage)],
+              activeId: clean,
+            }));
+          }}
+        />
+      )}
+
+      {renameOpen && active && (
+        <MasterDialog
+          title={`Rename master page ${active.id}`}
+          subtitle="The Page ID is the letter Publisher shows on the sheet's corner tab."
+          submitLabel="Rename"
+          initialId={active.id}
+          initialDescription={active.description}
+          onCancel={() => setRenameOpen(false)}
+          onSubmit={(id, description) => {
+            const clean = sanitizeId(id);
+            if (!clean) return;
+            if (clean !== set.activeId && set.masters.some((m) => m.id === clean)) {
+              window.alert(`Master page ${clean} already exists - pick another Page ID.`);
+              return;
+            }
+            setRenameOpen(false);
+            onChange((s) => {
+              const assignment: Record<string, string> = {};
+              for (const [page, assigned] of Object.entries(s.assignment)) {
+                assignment[page] = assigned === s.activeId ? clean : assigned;
+              }
+              return {
+                ...s,
+                masters: s.masters.map((m) =>
+                  m.id === s.activeId
+                    ? { ...m, id: clean, description: description.trim() || defaultDescription(clean) }
+                    : m,
+                ),
+                assignment,
+                activeId: clean,
+              };
+            });
+          }}
+        />
+      )}
     </div>
   );
 }
 
+/** Turn "2-5, 9" into zero-based page indexes, clamped to the publication. */
+function parsePageRange(raw: string, pageCount: number): number[] {
+  const out = new Set<number>();
+  const max = Math.max(1, pageCount);
+  for (const part of raw.split(',')) {
+    const bit = part.trim();
+    if (!bit) continue;
+    const range = /^(\d+)\s*(?:-|–|to)\s*(\d+)$/i.exec(bit);
+    if (range) {
+      const from = Math.max(1, Math.min(Number(range[1]), max));
+      const to = Math.max(1, Math.min(Number(range[2]), max));
+      for (let p = Math.min(from, to); p <= Math.max(from, to); p++) out.add(p - 1);
+      continue;
+    }
+    const single = Number(bit);
+    if (Number.isFinite(single) && single >= 1) out.add(Math.min(Math.round(single), max) - 1);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+/** One row of the Apply To menu. */
+function ApplyRow({
+  label,
+  hint,
+  onClick,
+}: {
+  label: string;
+  hint: string;
+  onClick: () => void;
+}) {
+  return (
+    <button onClick={onClick} className="block w-full px-3 py-1.5 text-left hover:bg-gdoc-hover">
+      <span className="block text-[13px] text-[#2b2622]">{label}</span>
+      <span className="block text-[11px] text-gdoc-muted">{hint}</span>
+    </button>
+  );
+}
+
+/** Publisher's New / Duplicate / Rename Master Page dialog. */
+function MasterDialog({
+  title,
+  subtitle,
+  submitLabel,
+  initialId,
+  initialDescription,
+  twoPageChoice = false,
+  onCancel,
+  onSubmit,
+}: {
+  title: string;
+  subtitle: string;
+  submitLabel: string;
+  initialId: string;
+  initialDescription: string;
+  twoPageChoice?: boolean;
+  onCancel: () => void;
+  onSubmit: (id: string, description: string, twoPage: boolean) => void;
+}) {
+  const [id, setId] = useState(initialId);
+  const [description, setDescription] = useState(initialDescription);
+  const [twoPage, setTwoPage] = useState(false);
+  const first = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    first.current?.focus();
+    first.current?.select();
+  }, []);
+
+  const submit = () => id.trim() && onSubmit(id, description, twoPage);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-sm rounded-lg bg-white p-5 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') onCancel();
+          if (e.key === 'Enter') submit();
+        }}
+      >
+        <h2 className="mb-1 text-[15px] font-semibold text-[#2b2622]">{title}</h2>
+        <p className="mb-3 text-[12px] text-gdoc-muted">{subtitle}</p>
+
+        <label className="mb-1 block text-[12px] text-gdoc-muted">Page ID (1 character)</label>
+        <input
+          ref={first}
+          value={id}
+          maxLength={2}
+          onChange={(e) => setId(sanitizeId(e.target.value) || e.target.value.slice(0, 1))}
+          className="mb-3 w-16 rounded-md border border-gdoc-border px-2 py-1.5 text-center text-[14px] uppercase outline-none focus:border-bb-400"
+        />
+
+        <label className="mb-1 block text-[12px] text-gdoc-muted">Description</label>
+        <input
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          className="mb-3 w-full rounded-md border border-gdoc-border px-2 py-1.5 text-[13px] outline-none focus:border-bb-400"
+        />
+
+        {twoPageChoice && (
+          <label className="mb-3 flex cursor-pointer items-center gap-2 text-[12.5px] text-[#2b2622]">
+            <input
+              type="checkbox"
+              checked={twoPage}
+              onChange={(e) => setTwoPage(e.target.checked)}
+              className="h-3.5 w-3.5 accent-bb-500"
+            />
+            Two-page master
+          </label>
+        )}
+
+        <div className="mt-2 flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="rounded border border-gdoc-border px-3 py-1.5 text-[13px] text-[#2b2622] hover:bg-gdoc-hover"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={submit}
+            disabled={!id.trim()}
+            className="rounded bg-bb-500 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-bb-600 disabled:opacity-40"
+          >
+            {submitLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The hairline Publisher draws between two button groups on a ribbon. */
+function GroupDivider() {
+  return <span className="mx-1.5 w-px self-stretch bg-gdoc-border" aria-hidden="true" />;
+}
+
 function RibbonGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-1 px-1.5">
       <div className="flex items-center gap-1.5">{children}</div>
       <span className="text-[10px] font-semibold uppercase tracking-wide text-gdoc-muted">
         {label}

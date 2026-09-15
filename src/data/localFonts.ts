@@ -1,5 +1,5 @@
 /**
- * Locally bundled / locally installed fonts — the families that sit at the top
+ * Locally bundled / locally installed fonts - the families that sit at the top
  * of the font picker and are not on Google Fonts.
  *
  * Hand-written on purpose: `googleFonts.ts` is regenerated from Google's
@@ -8,7 +8,7 @@
  *
  * Keep the array sorted by `family`. These entries are pinned above the Google
  * fonts in the picker (which arrive already alphabetical), so an unsorted block
- * here is the only place the dropdown can read out of order — that is exactly
+ * here is the only place the dropdown can read out of order - that is exactly
  * how the Franklin Gothic weights ended up as Gothic, Book, Medium, Demi, Heavy.
  *
  * Every family here needs a matching `@font-face` in `src/index.css` (they live
