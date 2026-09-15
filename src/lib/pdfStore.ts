@@ -80,32 +80,44 @@ export async function rasterizePdfPages(
   const pageCount = pdfDoc.numPages;
   const pages: RasterizedPage[] = [];
 
-  for (let i = 1; i <= pageCount; i++) {
-    const page = await pdfDoc.getPage(i);
-    // 2x scale gives ~192–200 DPI for crisp print quality
-    const viewport = page.getViewport({ scale: 2 });
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(viewport.width);
-    canvas.height = Math.round(viewport.height);
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      await page.render({ canvasContext: ctx, viewport }).promise;
+  try {
+    for (let i = 1; i <= pageCount; i++) {
+      const page = await pdfDoc.getPage(i);
+      // 2x scale gives ~192–200 DPI for crisp print quality
+      const viewport = page.getViewport({ scale: 2 });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        await page.render({ canvasContext: ctx, viewport }).promise;
+      }
+      const blob = await new Promise<Blob>((resolve) => {
+        canvas.toBlob((b) => resolve(b || new Blob([])), 'image/png');
+      });
+
+      const pageAssetId = newAssetId(`pdf_page_${pdfId}_p${i}`);
+      const objectUrl = await saveMediaBlob(pageAssetId, blob);
+
+      pages.push({
+        pageNumber: i,
+        assetId: pageAssetId,
+        blob,
+        objectUrl,
+        width: viewport.width / 2,
+        height: viewport.height / 2,
+      });
+
+      // Release the page's canvas and its bitmap as soon as it is stored: a
+      // 200-page import otherwise holds every rendered page in memory until it
+      // finishes, which is what made large PDFs stall the tab.
+      page.cleanup();
+      canvas.width = 0;
+      canvas.height = 0;
     }
-    const blob = await new Promise<Blob>((resolve) => {
-      canvas.toBlob((b) => resolve(b || new Blob([])), 'image/png');
-    });
-
-    const pageAssetId = newAssetId(`pdf_page_${pdfId}_p${i}`);
-    const objectUrl = await saveMediaBlob(pageAssetId, blob);
-
-    pages.push({
-      pageNumber: i,
-      assetId: pageAssetId,
-      blob,
-      objectUrl,
-      width: viewport.width / 2,
-      height: viewport.height / 2,
-    });
+  } finally {
+    // Hand the worker's memory back whether the import succeeded or threw.
+    await pdfDoc.destroy().catch(() => undefined);
   }
 
   return { pdfId, pageCount, pages };
@@ -115,11 +127,14 @@ export async function rasterizePdfPages(
  * Legacy count fallback or quick counting.
  */
 export async function pdfPageCount(data: ArrayBuffer): Promise<number> {
+  const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(data) });
   try {
-    const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(data) });
     const pdfDoc = await loadingTask.promise;
-    return pdfDoc.numPages;
+    const count = pdfDoc.numPages;
+    await pdfDoc.destroy().catch(() => undefined);
+    return count;
   } catch {
+    await loadingTask.destroy().catch(() => undefined);
     return 1;
   }
 }
@@ -135,18 +150,21 @@ export function bytesToDataUrl(bytes: Uint8Array): string {
 }
 
 /**
- * Register a PDF. Now persists to IndexedDB rather than localStorage.
+ * Register a PDF in IndexedDB (the localStorage key is cleaned up here too).
+ *
+ * Returns nothing on purpose: this used to hand back a fresh object URL, which
+ * no caller used and nothing ever revoked, so every import leaked one. The
+ * frame resolves its `pdf:` source through the media store anyway, which
+ * already caches the single object URL for the blob.
  */
-export function registerPdf(id: string, dataUrl: string): string {
+export function registerPdf(id: string, dataUrl: string): void {
   const blob = dataUrlToBlob(dataUrl);
   void saveMediaBlob(pdfSrc(id), blob);
-  // Clean up legacy localStorage if previously set
   try {
     localStorage.removeItem(KEY_PREFIX + id);
   } catch {
     // ignore
   }
-  return URL.createObjectURL(blob);
 }
 
 /**

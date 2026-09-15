@@ -48,9 +48,10 @@ import {
 } from './lib/master';
 import {
   loadRecentDocs,
+  offloadMediaForSave,
+  purgeDoc,
   saveDoc,
   renameDoc,
-  deleteDoc,
   newDocId,
   getVersions,
   recordVersion,
@@ -532,6 +533,19 @@ export default function App() {
   const focusedBandRef = useRef<BandKey>('rightHeader');
   /** A field the ribbon asked to insert into the focused band (at the caret). */
   const [masterToken, setMasterToken] = useState({ token: '', tick: 0 });
+  /** View > Layers panel - the frame list for the page on screen. */
+  const [layersOpen, setLayersOpen] = useState(false);
+  /** Format > Order (and Ctrl+[ / Ctrl+]): restack the selected frame. A tick
+      rather than a boolean, so asking twice for the same direction works. */
+  const [arrange, setArrange] = useState<{
+    mode: 'front' | 'forward' | 'backward' | 'back';
+    tick: number;
+  }>({ mode: 'forward', tick: 0 });
+  const arrangeBy = useCallback(
+    (mode: 'front' | 'forward' | 'backward' | 'back') =>
+      setArrange((a) => ({ mode, tick: a.tick + 1 })),
+    [],
+  );
 
   /** Version of the document content passed to the canvas (bump = reload). */
   const [canvasRev, setCanvasRev] = useState(0);
@@ -584,10 +598,20 @@ export default function App() {
     });
   }, []);
 
-  /** Read the live editor HTML and write it to saved docs. */
-  const persistNow = useCallback(() => {
+  /**
+   * Read the live editor HTML and write it to saved docs.
+   *
+   * Asynchronous only because of embedded media: pictures and imported PDF
+   * pages are moved into IndexedDB, and the document must not be saved
+   * referring to an asset that has not landed there yet - that is how a
+   * quick save-then-reload lost its pictures. Documents with nothing embedded
+   * resolve on the next microtask, so the debounce is unaffected.
+   */
+  const persistNow = useCallback(async () => {
     if (!activeDocRef.current) return;
     const content = docHtmlRef.current ?? '';
+    const offloaded = await offloadMediaForSave(boxesRef.current ?? undefined);
+    if (offloaded) boxesRef.current = offloaded;
     const doc: StoredDocument = {
       ...activeDocRef.current,
       content,
@@ -837,7 +861,9 @@ export default function App() {
   }, []);
 
   const deleteRecent = useCallback((id: string) => {
-    setRecentDocs(deleteDoc(id));
+    // `purgeDoc` also drops the document's snapshots and reclaims the media
+    // nothing else uses; `deleteDoc` only removed the entry itself.
+    void purgeDoc(id).then((list) => setRecentDocs(list));
   }, []);
 
   /** Rename a document straight from its card on the home screen. */
@@ -1180,19 +1206,24 @@ export default function App() {
         case 'file.trash': {
           const d = activeDocRef.current;
           if (d && window.confirm(`Move “${d.title}” to trash? This deletes it from this device.`)) {
-            setRecentDocs(deleteDoc(d.id));
+            const gone = d.id;
             activeDocRef.current = null;
             setActiveDoc(null);
             goHome();
+            // Delete the document, its version snapshots and any picture or
+            // PDF blob nothing else still refers to.
+            void purgeDoc(gone).then((list) => setRecentDocs(list));
           }
           break;
         }
         case 'file.versions':
           // Save first so the freshest snapshot is in the list, then open the
-          // right-hand history panel.
-          persistNow();
-          setMasterOpen(false);
-          setVersionsOpen(true);
+          // right-hand history panel - the panel reads the snapshots as it
+          // mounts, so it has to wait for the save to finish.
+          void persistNow().then(() => {
+            setMasterOpen(false);
+            setVersionsOpen(true);
+          });
           break;
         case 'file.details':
           setDialog('details');
@@ -1217,6 +1248,24 @@ export default function App() {
         case 'file.print':
           window.print();
           break;
+        case 'view.layers':
+          setLayersOpen((o) => !o);
+          setMenuTick((t) => t + 1);
+          break;
+
+        case 'order.front':
+          arrangeBy('front');
+          break;
+        case 'order.forward':
+          arrangeBy('forward');
+          break;
+        case 'order.backward':
+          arrangeBy('backward');
+          break;
+        case 'order.back':
+          arrangeBy('back');
+          break;
+
         case 'file.home':
         case 'file.move.home':
           // File ▸ Move ▸ Back to home screen and the shortcut both land here:
@@ -1453,6 +1502,12 @@ export default function App() {
         // are the two conventions for redo.
         e.preventDefault();
         ed.history(k === 'y' || (k === 'z' && e.shiftKey) ? 'redo' : 'undo');
+      } else if (k === ']' || k === '[') {
+        // Format > Order: Ctrl+] / Ctrl+[ restack one layer at a time, and
+        // Shift jumps the frame all the way to the front or the back. The
+        // menu advertises these, so they have to reach the canvas.
+        e.preventDefault();
+        arrangeBy(k === ']' ? (e.shiftKey ? 'front' : 'forward') : e.shiftKey ? 'back' : 'backward');
       } else if (k === 'l' && e.shiftKey) {
         // Advertised in the Format menu and shortcut list.
         e.preventDefault();
@@ -1535,8 +1590,9 @@ export default function App() {
       'tools.spellcheck': spellCheck,
       'tools.prefs.autocheck': spellCheck,
       'view.master': masterOpen,
+      'view.layers': layersOpen,
     }),
-    [pageName, landscape, docLang, viewMode, showRuler, showToolbar, spellCheck, masterOpen],
+    [pageName, landscape, docLang, viewMode, showRuler, showToolbar, spellCheck, masterOpen, layersOpen],
   );
 
   const stats = docStatsState;
@@ -1724,6 +1780,9 @@ export default function App() {
                 masterToken={masterToken}
                 onSelectMaster={handleSelectMaster}
                 onOpenMaster={() => setMasterOpen(true)}
+                layersOpen={layersOpen}
+                onCloseLayers={() => setLayersOpen(false)}
+                arrange={arrange}
               />
               </div>
             </div>

@@ -92,8 +92,13 @@ function downloadBlob(data: string, type: string, filename: string): void {
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  // The link has to be in the document for Firefox to honour the download, and
+  // the URL has to outlive the click: revoking it on the same tick could cancel
+  // the save before the browser had read the blob.
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 function escapeHtml(s: string): string {

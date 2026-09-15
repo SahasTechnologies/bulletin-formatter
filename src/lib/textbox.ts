@@ -19,9 +19,14 @@ export const FRAME_PAD = 4;
 /** Gutter between columns inside a frame, px. */
 export const FRAME_COL_GAP = 28;
 
-export interface TextBox {
+/**
+ * Just the geometry of a frame - everything the flow engine needs to answer
+ * "how much text fits here?". Kept separate (and `html`-free) so a caller can
+ * measure a *proposed* frame - a chain being redistributed, a frame about to be
+ * resized - without pretending to have content for it yet.
+ */
+export interface FrameGeom {
   id: string;
-  storyId: string;
   /** Zero-based page the frame sits on. */
   pageIndex: number;
   /** Position/size in page coordinates (CSS px, unscaled). */
@@ -29,9 +34,71 @@ export interface TextBox {
   y: number;
   w: number;
   h: number;
-  columns: number;
+  /** Newspaper-style column count for a text frame (1 = single column).
+      Optional: a frame that is not text (image, shape, rule) has none. */
+  columns?: number;
   /** Next frame in the linked chain, or null when this frame ends it. */
   nextId: string | null;
+}
+
+/**
+ * One frame - one object on a sheet of paper, and the app's single frame model.
+ *
+ * This is the *only* definition of a frame: the document canvas, the layers
+ * panel and the story-flow engine all speak it, so the type cannot drift out of
+ * step with the code that renders frames. It used to exist twice (here, and
+ * privately inside DocumentCanvas), and the copies disagreed - which is exactly
+ * how the layers panel came to read properties the model had never had.
+ *
+ * Geometry plus presentation only. For a text frame the live contentEditable
+ * DOM is the truth and `html` is the seed/fallback - see `reflowAll` in the
+ * canvas, which recomposes a chain's contents from the DOM before it measures.
+ */
+export interface TextBox extends FrameGeom {
+  /** Legacy story grouping. Chains are expressed by `nextId`, so this is only
+      present on frames that predate linking; kept optional deliberately. */
+  storyId?: string;
+  /** The frame's content: text markup, or empty for a picture, shape or rule.
+      The live DOM wins while the frame is being edited. */
+  html: string;
+  /** `image` holds a picture only. `shape` is a filled rectangle, `line` a
+      free-standing rule - both objects on the page, never text. `pdf` is a
+      whole page imported from a PDF: rendered by the browser's PDF viewer, so
+      its text stays selectable but it is not editable. `sheet` is an
+      empty-page marker that reserves a page slot so blank trailing pages
+      survive a save. `tombstone` is the end-of-piece marker: pinned, never
+      dragged, painted above the content. */
+  kind?: 'image' | 'sheet' | 'shape' | 'line' | 'pdf' | 'tombstone';
+  /** 1-based page of the imported PDF a `pdf` frame shows. */
+  pdfPage?: number;
+  /** Image source (asset reference, data URL or path) when `kind === 'image'`. */
+  src?: string;
+  /** Corner rounding (px) for an image box's picture or a shape. */
+  radius?: number;
+  /** Soft-edge fade (px): how far a picture's edges dissolve out. */
+  fade?: number;
+  /** How a picture fills its frame: `cover` (the default) crops it to the
+      frame, `contain` shows the whole picture inside it. */
+  fit?: 'cover' | 'contain';
+  /** Fill colour of a `shape` box (e.g. the bulletin's orange cards). */
+  fill?: string;
+  /** Stroke colour of a `line` box. */
+  stroke?: string;
+  /** Stroke weight (px) of a `line` box. */
+  thickness?: number;
+  /** Placeholder hint for an empty image box (e.g. from a bulletin template):
+      while set, the frame draws a dashed "click to add …" cover and a click
+      opens the image picker instead of selecting. Cleared once a picture is in. */
+  ph?: string;
+  /** Alignment of text inside the frame - what text with no alignment of its
+      own falls back to, so a wholesale retype stays put instead of jumping
+      left. */
+  align?: 'left' | 'center' | 'right' | 'justify';
+  /** The frame's **standard** text type, as a CSS declaration list (a
+      template's `data-text`, e.g. `font-size:13pt;line-height:1.45`). Plain
+      text in the frame falls back to it, and a wholesale retype (Ctrl+A then
+      type) adopts it rather than the first block's borrowed display type. */
+  css?: string;
 }
 
 export interface Story {
@@ -63,7 +130,7 @@ export function newId(prefix = 'f'): string {
 /* --------------------------------------------------------------- chains -- */
 
 /** Every frame in `boxId`'s chain, in flow order (head first). */
-export function chainOf(boxes: TextBox[], boxId: string): TextBox[] {
+export function chainOf<T extends FrameGeom>(boxes: T[], boxId: string): T[] {
   const byId = new Map(boxes.map((b) => [b.id, b]));
   if (!byId.has(boxId)) return [];
 
@@ -78,7 +145,7 @@ export function chainOf(boxes: TextBox[], boxId: string): TextBox[] {
     head = parentOf.get(head)!;
   }
 
-  const out: TextBox[] = [];
+  const out: T[] = [];
   let cur: string | null = head;
   const seen = new Set<string>();
   while (cur && !seen.has(cur)) {
@@ -92,7 +159,7 @@ export function chainOf(boxes: TextBox[], boxId: string): TextBox[] {
 }
 
 /** The first frame of every chain in the document. */
-export function chainHeads(boxes: TextBox[]): string[] {
+export function chainHeads(boxes: FrameGeom[]): string[] {
   const targets = new Set(boxes.map((b) => b.nextId).filter(Boolean) as string[]);
   return boxes.filter((b) => !targets.has(b.id)).map((b) => b.id);
 }
@@ -421,7 +488,7 @@ function splitToFit(
  */
 export function flowStory(
   storyHtml: string,
-  boxes: TextBox[],
+  boxes: FrameGeom[],
   font?: FontOpts,
 ): FlowResult {
   const meas = getMeasurer();
@@ -435,7 +502,7 @@ export function flowStory(
   let carry: string | null = null;
 
   for (const box of boxes) {
-    const cols = Math.max(1, box.columns);
+    const cols = Math.max(1, box.columns ?? 1);
     // Only the frame's TOP padding offsets the text (the bottom pad is
     // scroll allowance), so subtract that plus a 2px safety line - this
     // mirrors the live red-chrome test (scrollHeight vs clientHeight).
@@ -607,6 +674,7 @@ export function emptyDoc({ pageW, pageH, marginX = 96, marginY = 80 }: PageGeom)
         h: titleH,
         columns: 1,
         nextId: null,
+        html: '',
       },
       {
         id: newId(),
@@ -618,6 +686,7 @@ export function emptyDoc({ pageW, pageH, marginX = 96, marginY = 80 }: PageGeom)
         h: bodyH,
         columns: 1,
         nextId: null,
+        html: '',
       },
     ],
   };
@@ -649,6 +718,7 @@ export function docFromLegacyHtml(
         h: contentH,
         columns: 1,
         nextId: null,
+        html: '',
       },
     ],
   };

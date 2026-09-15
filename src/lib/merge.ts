@@ -256,14 +256,25 @@ export function mergeIssue(inputs: MergeInput[], opts: MergeOptions): MergeResul
   const place = (html: string, boxes: Array<Record<string, unknown>>, columns?: number) => {
     htmlParts.push(html);
     if (boxes.length) {
-      for (const b of boxes) {
+      // Renumber the part's frames, then re-point their links at the new ids.
+      // Dropping the links instead (as this used to) turned a threaded piece -
+      // an article's start page flowing into its continuation sheets - into
+      // independent frames whose stories no longer flowed into each other.
+      const stamp = Date.now().toString(36);
+      const fresh = boxes.map((_, i) => `m-${allBoxes.length + i}-${stamp}`);
+      const idOf = new Map<string, string>();
+      boxes.forEach((b, i) => {
+        if (typeof b.id === 'string' && !idOf.has(b.id)) idOf.set(b.id, fresh[i]);
+      });
+      boxes.forEach((b, i) => {
         allBoxes.push({
           ...b,
-          id: `m-${allBoxes.length}-${Date.now().toString(36)}`,
+          id: fresh[i],
           pageIndex: cursor + Number(b.pageIndex ?? 0),
-          nextId: null,
+          nextId:
+            typeof b.nextId === 'string' ? (idOf.get(b.nextId) ?? null) : null,
         });
-      }
+      });
       cursor += boxes.reduce((max, b) => Math.max(max, Number(b.pageIndex ?? 0)), 0) + 1;
     } else {
       // Nothing to place (an empty document) - still give it a page.

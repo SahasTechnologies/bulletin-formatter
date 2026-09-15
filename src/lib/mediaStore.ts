@@ -41,9 +41,19 @@ function notifyLoaded(id: string, url: string) {
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
+/**
+ * Open (once) the media database.
+ *
+ * The *failure* is deliberately not cached. This used to keep the rejected
+ * promise, so a single transient failure - IndexedDB momentarily blocked by
+ * another tab's upgrade, or an open that raced the private-mode check - left
+ * every later image and PDF load rejecting for the rest of the session, and
+ * the pictures never came back even once the database was available again.
+ * Now a failed open is forgotten so the next call retries.
+ */
 function getDB(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
-  dbPromise = new Promise((resolve, reject) => {
+  const attempt = new Promise<IDBDatabase>((resolve, reject) => {
     if (typeof indexedDB === 'undefined') {
       reject(new Error('IndexedDB not supported'));
       return;
@@ -56,7 +66,12 @@ function getDB(): Promise<IDBDatabase> {
       }
     };
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onerror = () => reject(req.error ?? new Error('IndexedDB open failed'));
+    req.onblocked = () => reject(new Error('IndexedDB upgrade blocked by another tab'));
+  });
+  dbPromise = attempt.catch((err: unknown) => {
+    dbPromise = null;
+    throw err;
   });
   return dbPromise;
 }

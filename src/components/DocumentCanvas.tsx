@@ -1,6 +1,16 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 import { Columns2, Columns3, ImagePlus, PaintBucket, Trash2, Unlink } from 'lucide-react';
-import PageSidebar from './PageSidebar';import { registerEditor,
+import PageSidebar from './PageSidebar';
+import LayersPanel from './LayersPanel';
+import { registerEditor,
   registerHistory,
   initEditorCommands,
   startSelectionTracking,
@@ -10,6 +20,7 @@ import {
   recomposeStory,
   caretOffsetIn,
   setCaretOffset,
+  type TextBox,
 } from '../lib/textbox';
 import {
   mirrorFrameStyle,
@@ -26,8 +37,13 @@ import {
   pdfPageCount,
   pdfSrc,
   registerPdf,
-  resolvePdfSrc,
 } from '../lib/pdfStore';
+import {
+  isAssetRef,
+  onMediaLoaded,
+  resolveMediaUrl,
+  syncResolveMediaUrl,
+} from '../lib/mediaStore';
 import {
   activeMaster,
   bandForPage,
@@ -190,68 +206,8 @@ function RulerTicks({
   return <>{marks}</>;
 }
 
-/**
- * A text box on the page. `html` is only the *seed* - after mount the box's
- * content is an uncontrolled contentEditable and the live DOM is the truth.
- */
-interface TextBox {
-  id: string;
-  /** Zero-based page the box sits on. */
-  pageIndex: number;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  html: string;
-  /** Newspaper-style column count for a text box (1 = single column).
-      Multi-column boxes fill column 1 top-to-bottom, then column 2, and
-      draw a gray rule down the gutter between columns. */
-  columns?: number;
-  /** Next box in a linked chain, or null when this box ends the chain. */
-  nextId: string | null;
-  /** Image boxes hold a picture only. `shape` is a filled rectangle, `line` a
-      free-standing rule - both are objects on the page, never text. `pdf` is a
-      whole page imported from a PDF: the browser's own viewer renders it, so
-      its text stays selectable, but it is not editable. A `sheet` entry is an
-      empty-page marker: it reserves a page slot so blank (e.g. trailing) pages
-      survive saves. A `tombstone` is the end-of-piece marker: placed by the
-      template or the menu, never dragged, and painted above the content. */
-  kind?: 'image' | 'sheet' | 'shape' | 'line' | 'pdf' | 'tombstone';
-  /** 1-based page of the imported PDF a `pdf` frame shows. */
-  pdfPage?: number;
-  /** Image source (data URL or path) when `kind === 'image'`. */
-  src?: string;
-  /** Corner rounding (px) applied to an image box's picture or a shape. */
-  radius?: number;
-  /** Soft-edge fade (px): how far the picture's edges dissolve out. */
-  fade?: number;
-  /** How a picture fills its frame: `cover` (the default) crops it to the
-      frame, `contain` shows the whole picture inside the frame. Templates may
-      pin either with `data-fit`. */
-  fit?: 'cover' | 'contain';
-  /** Fill colour of a `shape` box (e.g. the bulletin's orange cards). */
-  fill?: string;
-  /** Stroke colour of a `line` box. */
-  stroke?: string;
-  /** Stroke weight (px) of a `line` box. */
-  thickness?: number;
-  /** Placeholder hint for an empty image box (e.g. from a bulletin template):
-      while set, the frame draws a dashed 'click to add …' cover and a click
-      opens the image picker instead of selecting. Cleared when a real image
-      is dropped in. */
-  ph?: string;
-  /** Alignment of text inside the frame. A template declares it with
-      `data-align`; it governs text with no alignment of its own, so a frame
-      that has been retyped wholesale stays centred rather than jumping left. */
-  align?: 'left' | 'center' | 'right' | 'justify';
-  /** The frame's **standard** text type, as a CSS declaration list (a
-      template's `data-text`, e.g. `font-size:13pt;line-height:1.45`). It is
-      what plain text inside the frame falls back to - and what a wholesale
-      retype (Ctrl+A then type) adopts, instead of the first block's borrowed
-      display type, which is what used to flood the frame with 18pt type and
-      turn its chrome red. */
-  css?: string;
-}
+/* The frame model itself lives in `src/lib/textbox.ts` - one definition, shared
+   with the layers panel and the flow engine (see the note on `TextBox` there). */
 
 interface DocumentCanvasProps {
   zoom: number;
@@ -319,6 +275,12 @@ interface DocumentCanvasProps {
    * running head and folio live) jumps straight into the master editor.
    */
   onOpenMaster?: () => void;
+  /** View > Layers panel: the frame list for the page on screen. */
+  layersOpen?: boolean;
+  onCloseLayers?: () => void;
+  /** Format > Order, and the Ctrl+[ / Ctrl+] shortcuts: which way to restack
+      the selected frame, and a tick that changes on every request. */
+  arrange?: { mode: 'front' | 'forward' | 'backward' | 'back'; tick: number };
 }
 
 let boxSeq = 0;
@@ -796,6 +758,9 @@ export default function DocumentCanvas({
   onOpenMaster,
   masterToken,
   onSelectMaster,
+  layersOpen = false,
+  onCloseLayers,
+  arrange,
 }: DocumentCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // An absent master renders nothing rather than crashing the canvas.
@@ -2101,6 +2066,59 @@ export default function DocumentCanvas({
     [applyBoxes, activatePage, resetScroll, reflowAll, snapshot, spliceNames],
   );
 
+  /**
+   * Restack one frame - Format ▸ Order, the Ctrl+[ / Ctrl+] shortcuts and the
+   * layers panel all land here.
+   *
+   * z-order *is* array order: frames are absolutely positioned siblings painted
+   * in the order they appear, so moving a frame later in the array puts it in
+   * front. Only the frame's own page is reshuffled - a frame must never swap
+   * places with another sheet's frames, because that would restack that sheet
+   * instead. The end-of-piece marker is pinned above everything (it is drawn
+   * after every frame), so it takes no part in the ordering and cannot be
+   * pushed behind anything.
+   */
+  const reorderBox = useCallback(
+    (id: string, mode: 'front' | 'forward' | 'backward' | 'back') => {
+      const list = boxesRef.current;
+      const target = list.find((b) => b.id === id);
+      if (!target || target.kind === 'tombstone') return;
+      const onPage = (b: TextBox) => b.pageIndex === target.pageIndex && b.kind !== 'tombstone';
+      const order = list.filter(onPage).map((b) => b.id);
+      const at = order.indexOf(id);
+      if (at === -1) return;
+      const to =
+        mode === 'front'
+          ? order.length - 1
+          : mode === 'back'
+            ? 0
+            : mode === 'forward'
+              ? Math.min(order.length - 1, at + 1)
+              : Math.max(0, at - 1);
+      if (to === at) return;
+      order.splice(at, 1);
+      order.splice(to, 0, id);
+      const byId = new Map(list.map((b) => [b.id, b]));
+      let k = 0;
+      applyBoxes(list.map((b) => (onPage(b) ? byId.get(order[k++])! : b)));
+      setSelId(id);
+      reflowAll();
+      snapshot();
+    },
+    [applyBoxes, reflowAll, snapshot],
+  );
+
+  /* A menu command or shortcut asked for a restack: apply it to the frame the
+     user has selected. Guarded by a tick so the same request only runs once. */
+  const lastArrangeTick = useRef(arrange?.tick ?? 0);
+  useEffect(() => {
+    if (!arrange) return;
+    if (arrange.tick === lastArrangeTick.current) return;
+    lastArrangeTick.current = arrange.tick;
+    if (selId) reorderBox(selId, arrange.mode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [arrange?.tick]);
+
   /** Give a page a name of its own, saved with the document. */
   const renamePage = useCallback(
     (i: number, name: string) => {
@@ -2605,6 +2623,29 @@ export default function DocumentCanvas({
         </div>
       )}
 
+      {layersOpen && !masterMode && (
+        <LayersPanel
+          pageIndex={activePageUi}
+          boxes={boxesState}
+          selectedId={selId}
+          isOpen={layersOpen}
+          readOnly={!!readOnly}
+          onClose={() => onCloseLayers?.()}
+          onSelectBox={(id) => {
+            selectBox(id);
+            // Selecting from the list may name a frame on another sheet (the
+            // list keeps showing the page you were on, but a stale selection
+            // can point anywhere) - follow it there.
+            activatePage(boxesRef.current.find((b) => b.id === id)?.pageIndex ?? activePageUi);
+          }}
+          onBringToFront={(id) => reorderBox(id, 'front')}
+          onBringForward={(id) => reorderBox(id, 'forward')}
+          onSendBackward={(id) => reorderBox(id, 'backward')}
+          onSendToBack={(id) => reorderBox(id, 'back')}
+          onDeleteBox={removeBox}
+        />
+      )}
+
       <div className="doc-inner mx-auto max-w-[1100px] px-12">
         {/* --print-page-w/h keep each sheet exactly one printed page (see the
             @media print rules in index.css). */}
@@ -2769,7 +2810,7 @@ function PageThumb({
               const maskV = `linear-gradient(to bottom, transparent 0, #000 ${maskPct.toFixed(1)}%, #000 ${(100 - maskPct).toFixed(1)}%, transparent 100%)`;
               const mask = fade > 0 ? `${maskH}, ${maskV}` : undefined;
               return (
-                <img
+                <ResolvedImg
                   key={b.id}
                   src={b.src}
                   alt=""
@@ -3620,7 +3661,7 @@ function ImageBoxView({
       }
       data-box-id={box.id}
     >
-      <img
+      <ResolvedImg
         ref={(el) => onRegisterImg(box.id, el)}
         src={box.src}
         alt={box.ph ?? ''}
@@ -3956,8 +3997,58 @@ function ShapeBoxView({
  * deliberately not a text box: there is nothing to type into, and it is not
  * draggable (a drag would swallow the click that starts a text selection).
  */
+/**
+ * Turn a frame's `src` into something the browser can actually load.
+ *
+ * Pictures and imported PDF pages are stored as blobs in IndexedDB and the
+ * frame carries only an `asset:`/`img:`/`pdf:` reference, so the reference has
+ * to be resolved back to an object URL. That read is asynchronous - the first
+ * paint genuinely has nothing to show - so the frame re-renders when the blob
+ * arrives (via the media store's load notification) instead of sitting there
+ * with an unresolvable `src` attribute, which is how saved-once pictures used
+ * to come back as broken images after a reload.
+ */
+function useResolvedSrc(src: string | undefined): string | null {
+  const [url, setUrl] = useState<string | null>(() => syncResolveMediaUrl(src));
+
+  useEffect(() => {
+    let alive = true;
+    setUrl(syncResolveMediaUrl(src));
+    if (src && isAssetRef(src)) {
+      void resolveMediaUrl(src).then((resolved) => {
+        if (alive && resolved) setUrl(resolved);
+      });
+    }
+    const stop = onMediaLoaded((id, loaded) => {
+      if (alive && id === src) setUrl(loaded);
+    });
+    return () => {
+      alive = false;
+      stop();
+    };
+  }, [src]);
+
+  return url;
+}
+
+/**
+ * An <img> whose `src` may be an asset reference rather than a plain URL.
+ * A component (rather than a hook call inline) so the resolve state belongs to
+ * one picture and cannot disturb the hook order of the sheet around it. The ref
+ * is forwarded because the canvas registers every picture element it draws.
+ */
+const ResolvedImg = forwardRef<
+  HTMLImageElement,
+  React.ImgHTMLAttributes<HTMLImageElement> & { src?: string }
+>(function ResolvedImg({ src, ...rest }, ref) {
+  const url = useResolvedSrc(src);
+  // Rendered even while unresolvable, so the frame keeps its box and its
+  // object-fit/border-radius styles rather than collapsing to nothing.
+  return <img {...rest} ref={ref} src={url ?? undefined} />;
+});
+
 function PdfPageView({ box }: { box: TextBox }) {
-  const url = resolvePdfSrc(box.src);
+  const url = useResolvedSrc(box.src);
   const page = Math.max(1, box.pdfPage ?? 1);
   return (
     <div

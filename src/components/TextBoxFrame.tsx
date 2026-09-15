@@ -178,7 +178,7 @@ export default function TextBoxFrame({
     beginDrag('move', e);
   };
 
-  const cols = Math.max(1, box.columns);
+  const cols = Math.max(1, box.columns ?? 1);
 
   const handles: { h: Handle; style: React.CSSProperties; cursor: string }[] = [
     { h: 'nw', style: { left: 0, top: 0 }, cursor: 'nwse-resize' },

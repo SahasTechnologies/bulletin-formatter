@@ -50,6 +50,8 @@ export default function MasterSection({
   const [applyOpen, setApplyOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
+  /** Publisher's "Apply Master Page…" page-range prompt. */
+  const [rangeOpen, setRangeOpen] = useState(false);
   const applyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -176,21 +178,7 @@ export default function MasterSection({
                   hint={`A range, 1–${Math.max(1, pageCount)}`}
                   onClick={() => {
                     setApplyOpen(false);
-                    const raw = window.prompt(
-                      `Apply master page ${set.activeId} to which pages? (e.g. 2-5, or 3)`,
-                      `1-${Math.max(1, pageCount)}`,
-                    );
-                    if (!raw) return;
-                    const pages = parsePageRange(raw, pageCount);
-                    if (!pages.length) {
-                      window.alert('That is not a page range - try something like 2-5.');
-                      return;
-                    }
-                    onChange((s) => {
-                      const assignment = { ...s.assignment };
-                      for (const p of pages) assignment[String(p)] = s.activeId;
-                      return { ...s, assignment };
-                    });
+                    setRangeOpen(true);
                   }}
                 />
                 <ApplyRow
@@ -294,6 +282,22 @@ export default function MasterSection({
         />
       )}
 
+      {rangeOpen && (
+        <PageRangeDialog
+          masterId={set.activeId}
+          pageCount={pageCount}
+          onCancel={() => setRangeOpen(false)}
+          onApply={(pages) => {
+            onChange((s) => {
+              const assignment = { ...s.assignment };
+              for (const p of pages) assignment[String(p)] = s.activeId;
+              return { ...s, assignment };
+            });
+            setRangeOpen(false);
+          }}
+        />
+      )}
+
       {renameOpen && active && (
         <MasterDialog
           title={`Rename master page ${active.id}`}
@@ -368,6 +372,93 @@ function ApplyRow({
       <span className="block text-[13px] text-[#2b2622]">{label}</span>
       <span className="block text-[11px] text-gdoc-muted">{hint}</span>
     </button>
+  );
+}
+
+/**
+ * Which pages does this master dress? (Apply To > Apply to pages...)
+ *
+ * This replaces the native window.prompt the ribbon used to raise: a modal
+ * prompt blocks the whole tab, cannot be styled, and hides the invalid-range
+ * error behind a second dialog, so a typo cost two round trips.
+ */
+function PageRangeDialog({
+  masterId,
+  pageCount,
+  onCancel,
+  onApply,
+}: {
+  masterId: string;
+  pageCount: number;
+  onCancel: () => void;
+  onApply: (pages: number[]) => void;
+}) {
+  const [value, setValue] = useState('1-' + Math.max(1, pageCount));
+  const [error, setError] = useState('');
+  const field = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    field.current?.focus();
+    field.current?.select();
+  }, []);
+
+  const apply = () => {
+    const pages = parsePageRange(value, pageCount);
+    if (!pages.length) {
+      setError('Not a page range - try something like 2-5, or 3.');
+      return;
+    }
+    onApply(pages);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-sm rounded-lg bg-white p-5 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') onCancel();
+          if (e.key === 'Enter') apply();
+        }}
+      >
+        <h2 className="mb-1 text-[15px] font-semibold text-[#2b2622]">
+          Apply master page {masterId}
+        </h2>
+        <p className="mb-3 text-[12px] text-gdoc-muted">
+          Which pages should it dress? A range like 2-5, a single page like 3,
+          or 1,4,7. Pages run 1 to {Math.max(1, pageCount)}.
+        </p>
+
+        <input
+          ref={field}
+          value={value}
+          onChange={(e) => {
+            setValue(e.target.value);
+            setError('');
+          }}
+          className="w-full rounded-md border border-gdoc-border px-2 py-1.5 text-[13px] outline-none focus:border-bb-400"
+        />
+        {error && <p className="mt-1 text-[11.5px] text-red-600">{error}</p>}
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="rounded border border-gdoc-border px-3 py-1.5 text-[13px] text-[#2b2622] hover:bg-gdoc-hover"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={apply}
+            className="rounded bg-bb-500 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-bb-600"
+          >
+            Apply
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
