@@ -637,6 +637,36 @@ export default function App() {
     masterRef.current = master;
   }, [master]);
 
+  /**
+   * Flush a pending save before the page goes away.
+   *
+   * Persistence is debounced (400-600ms), and documents live *only* in this
+   * browser's localStorage - there is no server copy to fall back on. Closing
+   * the tab or reloading inside that window used to drop the last few
+   * keystrokes silently. `pagehide` covers reloads, tab closes and bfcache
+   * navigations; `visibilitychange` covers the mobile/desktop case where a
+   * hidden tab is killed without either firing.
+   */
+  useEffect(() => {
+    const flush = () => {
+      if (!persistTimer.current) return;
+      clearTimeout(persistTimer.current);
+      persistTimer.current = null;
+      persistNow();
+    };
+    const onHidden = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    window.addEventListener('pagehide', flush);
+    window.addEventListener('beforeunload', flush);
+    document.addEventListener('visibilitychange', onHidden);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      window.removeEventListener('beforeunload', flush);
+      document.removeEventListener('visibilitychange', onHidden);
+    };
+  }, [persistNow]);
+
   /** Edit the master pages and save on a short debounce.
    *  `reseed` forces the on-page bands to re-render from state - set it when
    *  the panel (not the page) changed the text. Never set it while the user is
@@ -1188,6 +1218,10 @@ export default function App() {
           window.print();
           break;
         case 'file.home':
+        case 'file.move.home':
+          // File ▸ Move ▸ Back to home screen and the shortcut both land here:
+          // the menu declaration and this handler used to disagree on the id,
+          // so the menu item did nothing at all.
           goHome();
           break;
 
