@@ -101,7 +101,7 @@ Text never sits on the page itself - it sits in a **frame**. A frame can be:
 | Image | A picture, cropped (`cover`) or whole (`contain`) | **Insert ▸ Image**, or drop art in |
 | Shape | A filled rectangle (the orange cards) | **Insert ▸ Shape** |
 | Line | A free-standing rule | **Insert ▸ Line** |
-| PDF | An imported PDF page, shown live so its text stays selectable | the pages pane ▸ *Insert PDF* |
+| PDF | An imported PDF page, shown live so its text stays selectable | the pages pane ▸ *Insert PDF below* (how puzzles usually arrive) |
 | Sheet | An empty-page marker that reserves a blank page | automatic |
 | Tombstone | The end-of-piece marker (◼), pinned furniture | **Insert ▸ Tombstone**. You can also turn it on for the page via Tools ▸ Preferences |
 

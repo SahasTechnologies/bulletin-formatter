@@ -174,7 +174,8 @@ export const TEMPLATES: Template[] = [
   {
     id: 'bulletin-puzzle',
     name: 'Puzzle',
-    blurb: 'A full-page puzzle frame - drop the grid in and fill the sheet',
+    blurb:
+      'A full-page puzzle frame - drop the grid in as an image, or import the puzzle as a PDF page',
     content: bulletinPuzzle,
     master: ISSUE_MASTER,
     // A puzzle fills the sheet edge to edge: the frame opens full-page (0, 0,

@@ -406,7 +406,7 @@ export const GUIDE_PAGES: GuidePage[] = [
     name: 'Puzzle',
     section: 'Puzzles',
     summary:
-      'The puzzle is the whole page: one artwork frame fills the sheet edge to edge, with the title and instructions set into the puzzle image itself.',
+      'The puzzle is the whole page: one artwork frame fills the sheet edge to edge, with the title and instructions set into the puzzle image itself. A puzzle that arrives as a PDF is imported as a page rather than dropped in as a picture - see the last step here.',
     rules: [
       { role: 'Puzzle', font: '-', size: '-', note: 'Full-page artwork frame - drag your grid in to fill it' },
     ],
@@ -423,6 +423,14 @@ export const GUIDE_PAGES: GuidePage[] = [
         title: 'Keep the page to the puzzle alone',
         body: 'No title, byline or instruction text on the sheet: the title and the clues are already part of the artwork, and anything typed around it breaks the full-bleed look.',
         preview: `<div style="height:200px;border:1px solid #e5ddd0;background:#fff;display:grid;place-items:center;font-family:${BODY};font-size:13px;color:#b3aca2;">the whole print area, nothing but the puzzle</div>`,
+      },
+      {
+        title: 'A puzzle that came as a PDF is imported, not pasted',
+        body: 'Puzzles usually leave their drawing program as a PDF, and a PDF does not have to be turned into a picture first: the app imports it as *pages*. Open the pages pane and use “Insert PDF below” - the puzzle becomes a sheet of the issue, its lines and letters still vector-sharp, and it prints exactly as the PDF does. Drop an image into the frame instead when the puzzle arrived as a PNG or a JPG.',
+        click: 'Pages pane ▸ Insert PDF below',
+        preview: `<div style="height:190px;border:1px solid #e5ddd0;background:#fbfaf8;display:grid;place-items:center;text-align:center;font-family:${BODY};font-size:13px;color:#6f675e;padding:12px;${MARK}">
+  <span><b style="color:#3c4043;">Pages pane ▸ Insert PDF below</b><br>its pages become sheets of the issue<br><span style="font-size:11px;color:#9a938a;">an image goes into the frame on the left instead</span></span>
+</div>`,
       },
     ],
   },
@@ -542,6 +550,25 @@ export const GUIDE_WORKFLOW_STEPS: GuideStep[] = [
 /** Which kind of piece a walkthrough is about. */
 export type FormatterKind = 'article' | 'poem';
 
+/** One part of a collected issue that can turn out to be missing. */
+export interface WalkthroughCheck {
+  /** The part, as the guide names it: "Puzzle". */
+  label: string;
+  /** True for parts named in the plural, so the button reads correctly. */
+  plural?: boolean;
+  /** What to do when it has not arrived. */
+  advice: string;
+  /** The reference page that shows how that part is made. */
+  guidePageId: string;
+}
+
+/** The "is everything here?" tick-list a walkthrough step can carry. */
+export interface WalkthroughChecklist {
+  /** The question over the buttons. */
+  question: string;
+  parts: WalkthroughCheck[];
+}
+
 /** One step of an interactive walkthrough, as the `/guide` wizard shows it. */
 export interface WalkthroughStep {
   /** Imperative one-liner. */
@@ -563,6 +590,12 @@ export interface WalkthroughStep {
    * way, and its own `title`/`body` are the fallback.
    */
   variants?: Partial<Record<FormatterKind, Partial<WalkthroughStep>>>;
+  /**
+   * A tick-list the step asks the reader to run through, for the steps where
+   * the honest answer is often "no" and the useful next thing depends on
+   * which part is missing.
+   */
+  checklist?: WalkthroughChecklist;
   /** Background for the Formatter Master, who does this once per issue. */
   aside?: string;
   /** A mock-up, in the page's own HTML (see `GuideStep.preview`). */
@@ -709,6 +742,63 @@ export const FORMATTER_MASTER_STEPS: WalkthroughStep[] = [
     title: 'Check that everything is there',
     body: 'Read the contents list against the pieces you collected: every article, poem, puzzle and graphic present, in an order that reads well, the title page first and the end page last. Fix the order with the arrows in the dialog before you merge - it is much harder afterwards.',
     click: 'Merge ▸ the arrows next to each file',
+    checklist: {
+      question: 'Is everything in the issue?',
+      parts: [
+        {
+          label: 'Title page',
+          advice:
+            'The cover artwork is a page of the issue, not a piece anyone hands in. Check the Classroom and the shared folder for the finished cover; if it genuinely has not been made yet, that is a job to chase now - an issue with no cover cannot be fixed by merging harder.',
+          guidePageId: 'title-page',
+        },
+        {
+          label: 'Editorial',
+          advice:
+            'The editor-in-chief writes this one and hands it in like any other page. Ask them for the .bulletin file - or ask whether this issue is running without one, which is allowed as long as nothing in the contents list refers to it.',
+          guidePageId: 'editorial',
+        },
+        {
+          label: 'Page of contents',
+          advice:
+            'Nobody hands a page of contents in: the Merge writes it from the pieces it is given. If it is not in the merged issue, tick the contents option in the Merge dialog and merge again.',
+          guidePageId: 'contents',
+        },
+        {
+          label: 'Articles',
+          plural: true,
+          advice:
+            'Chase the formatter who took it (their name is against it on the Classroom sheet) and check whether their file is sitting unopened in the Classroom assignment. A missing article is a gap in the contents list, so decide early whether to wait or to renumber without it.',
+          guidePageId: 'article',
+        },
+        {
+          label: 'Puzzles',
+          plural: true,
+          advice:
+            'Puzzles very often leave their drawing program as a PDF rather than as a picture, and a PDF does not have to be turned into an image: open the pages pane and use “Insert PDF below”, and the puzzle lands as a sheet of its own with every line still sharp. For a PNG or JPG, drop it into the puzzle page\'s full-page frame instead.',
+          guidePageId: 'puzzle',
+        },
+        {
+          label: 'Poems',
+          plural: true,
+          advice:
+            'Poems come in from the writer as plain text as often as as a file. Ask the formatter for the .bulletin file they saved; if they only sent words, the Poem template is quick to lay out - or hand it to somebody who has time before the deadline.',
+          guidePageId: 'poem',
+        },
+        {
+          label: 'Graphics',
+          plural: true,
+          advice:
+            'Artwork pages are often the last thing finished. Chase the artist for the image itself if the formatter cannot, and remember the Graphic template is one frame with a title and byline - it takes five minutes once the picture exists.',
+          guidePageId: 'graphic',
+        },
+        {
+          label: 'End page',
+          advice:
+            'The end page is the credits page, and it ships with the issue: it is a template with the team list on it, not something anyone hands in. Update the names and it is done.',
+          guidePageId: 'end-page',
+        },
+      ],
+    },
   },
   {
     title: 'The issue is saved as you work',

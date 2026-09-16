@@ -23,6 +23,8 @@ import {
   type FormatterKind,
   type GuidePage,
   type GuideStep,
+  type WalkthroughCheck,
+  type WalkthroughChecklist,
   type WalkthroughStep,
 } from '../data/designGuide';
 import Confetti from './Confetti';
@@ -126,6 +128,7 @@ export default function GuideScreen({
           kind={kind}
           kindStep={kindStep}
           celebrate={celebrate}
+          pages={pages}
           onKind={(k) => setKind(k)}
           onStep={setStep}
           onFinish={() => setCelebrate(true)}
@@ -296,6 +299,7 @@ function Wizard({
   kind,
   kindStep,
   celebrate,
+  pages,
   onKind,
   onStep,
   onFinish,
@@ -304,6 +308,8 @@ function Wizard({
   run: 'new' | 'master';
   steps: WalkthroughStep[];
   step: number;
+  /** The reference pages, so a checklist can show the steps for a part. */
+  pages: GuidePage[];
   kind: FormatterKind | null;
   /** Index of the article-or-poem step, or -1 when this run has no choice. */
   kindStep: number;
@@ -328,6 +334,11 @@ function Wizard({
   const scrollRef = useRef<HTMLDivElement>(null);
   /** True at the article-or-poem step until one of them has been picked. */
   const needsKind = !!raw.choices && !kind;
+  /** The part reported missing on this step, and the page being read instead. */
+  const [missing, setMissing] = useState<string | null>(null);
+  const [stepsFor, setStepsFor] = useState<string | null>(null);
+  const missingPart = current.checklist?.parts.find((p) => p.label === missing) ?? null;
+  const stepsForPage = stepsFor ? pages.find((p) => p.id === stepsFor) ?? null : null;
 
   /**
    * A new step starts at the top of the card.
@@ -339,6 +350,10 @@ function Wizard({
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
     titleRef.current?.focus({ preventScroll: true });
+    // A reported gap and the steps opened from it belong to the step they were
+    // opened on; carrying them to the next step would hide it behind them.
+    setMissing(null);
+    setStepsFor(null);
   }, [step, run]);
 
 
@@ -460,6 +475,26 @@ function Wizard({
               <b className="text-[#3c4043]">Note.</b> {current.aside}
             </p>
           )}
+
+          {current.checklist && (
+            <Checklist
+              checklist={current.checklist}
+              missing={missingPart}
+              stepsPage={stepsForPage}
+              onReport={(label) => {
+                setMissing(label);
+                setStepsFor(null);
+              }}
+              onShowSteps={(pageId) => setStepsFor(pageId)}
+              onBackToChecklist={() => setStepsFor(null)}
+              onCarryOn={() => {
+                setMissing(null);
+                setStepsFor(null);
+                onStep(step + 1);
+              }}
+              onEverythingThere={() => onStep(step + 1)}
+            />
+          )}
         </div>
 
         <div className="mt-5 flex items-center justify-between gap-3">
@@ -523,6 +558,127 @@ function Wizard({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------- checklist */
+
+/**
+ * The "is everything in the issue?" tick-list.
+ *
+ * The honest answer to that question is usually "mostly", and what the Master
+ * should do next depends entirely on which part is missing - chase an artist,
+ * re-run the merge for the contents, import a puzzle that arrived as a PDF. So
+ * the step asks, and the answer it gets decides what it says: no part is a
+ * dead end, each one ends in the steps that make it or in carrying on without
+ * it.
+ */
+function Checklist({
+  checklist,
+  missing,
+  stepsPage,
+  onReport,
+  onShowSteps,
+  onBackToChecklist,
+  onCarryOn,
+  onEverythingThere,
+}: {
+  checklist: WalkthroughChecklist;
+  missing: WalkthroughCheck | null;
+  stepsPage: GuidePage | null;
+  onReport: (label: string) => void;
+  onShowSteps: (pageId: string) => void;
+  onBackToChecklist: () => void;
+  onCarryOn: () => void;
+  onEverythingThere: () => void;
+}) {
+  const isAre = (c: WalkthroughCheck) => (c.plural ? 'are' : 'is');
+
+  return (
+    <div className="mt-4 rounded-lg border border-gdoc-border bg-[#fbfaf8] p-4">
+      <p className="text-[13px] font-medium text-[#3c4043]">{checklist.question}</p>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          onClick={onEverythingThere}
+          className="flex items-center gap-1.5 rounded-lg bg-bb-500 px-4 py-2 text-[13px] font-medium text-white shadow-sm hover:bg-bb-600"
+        >
+          <Check size={15} />
+          Everything is there
+        </button>
+        {checklist.parts.map((p) => {
+          const active = missing?.label === p.label;
+          return (
+            <button
+              key={p.label}
+              onClick={() => onReport(p.label)}
+              aria-pressed={active}
+              className={`rounded-full border px-3 py-1.5 text-[12px] font-medium ${
+                active
+                  ? 'border-bb-500 bg-bb-500 text-white'
+                  : 'border-gdoc-border bg-white text-[#5f5a53] hover:border-bb-400'
+              }`}
+            >
+              {p.label} {isAre(p)} not there
+            </button>
+          );
+        })}
+      </div>
+
+      {missing && !stepsPage && (
+        <div className="mt-4 rounded-lg border border-bb-400/60 bg-white p-3">
+          <p className="text-[13px] font-medium text-[#3c4043]">
+            {missing.label} {isAre(missing)} not there
+          </p>
+          <p className="mt-1 max-w-[72ch] text-[13px] leading-relaxed text-gdoc-muted">
+            {missing.advice}
+          </p>
+          <p className="mt-3 text-[12px] font-medium text-[#3c4043]">
+            Do you need to see the steps for it?
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => onShowSteps(missing.guidePageId)}
+              className="flex items-center gap-1.5 rounded border border-bb-500 bg-white px-3 py-2 text-[13px] font-medium text-bb-700 hover:bg-bb-500 hover:text-white"
+            >
+              <BookOpen size={15} />
+              Show me the steps
+            </button>
+            <button
+              onClick={onCarryOn}
+              className="flex items-center gap-1.5 rounded border border-gdoc-border bg-white px-3 py-2 text-[13px] text-[#3c4043] hover:border-bb-400"
+            >
+              Carry on without it
+            </button>
+          </div>
+        </div>
+      )}
+
+      {missing && stepsPage && (
+        <div className="mt-4 rounded-lg border border-gdoc-border bg-white p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[14px] font-medium text-[#3c4043]">
+              {stepsPage.name}: how that page is made
+            </p>
+            <button
+              onClick={onBackToChecklist}
+              className="flex items-center gap-1.5 rounded border border-gdoc-border bg-white px-2.5 py-1.5 text-[12px] text-[#3c4043] hover:border-bb-400"
+            >
+              <ArrowLeft size={13} />
+              Back to the checklist
+            </button>
+          </div>
+          <p className="mt-1 max-w-[72ch] text-[12px] leading-relaxed text-gdoc-muted">
+            {stepsPage.summary}
+          </p>
+          <ol className="mt-4 space-y-4">
+            {stepsPage.steps.map((s, i) => (
+              <StepCard key={s.title} step={s} n={i + 1} />
+            ))}
+          </ol>
+        </div>
+      )}
     </div>
   );
 }
