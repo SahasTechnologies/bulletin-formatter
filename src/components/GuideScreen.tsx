@@ -20,6 +20,7 @@ import {
   GUIDE_MASTER_SETUP,
   GUIDE_WORKFLOW_STEPS,
   NEW_FORMATTER_STEPS,
+  type FormatterKind,
   type GuidePage,
   type GuideStep,
   type WalkthroughStep,
@@ -58,6 +59,12 @@ export default function GuideScreen({
   /** Which walkthrough is running: a new formatter, or the Master. */
   const [run, setRun] = useState<'new' | 'master'>('new');
   const [step, setStep] = useState(0);
+  /**
+   * What the formatter said they were editing. It is what makes the article
+   * and poem walkthroughs different from each other, so it lives up here rather
+   * than inside the wizard: it must survive stepping backwards.
+   */
+  const [kind, setKind] = useState<FormatterKind | null>(null);
   const [celebrate, setCelebrate] = useState(false);
   const [narrow, setNarrow] = useState(() => window.innerWidth < NARROW_AT);
 
@@ -69,6 +76,9 @@ export default function GuideScreen({
 
   const steps = run === 'new' ? NEW_FORMATTER_STEPS : FORMATTER_MASTER_STEPS;
 
+  /** The step that asks article-or-poem, so a later step can send you back. */
+  const kindStep = steps.findIndex((s) => !!s.choices);
+
   /** Open a template from anywhere in the guide (the wizard's choices do). */
   const openTemplate = (templateId: string) => {
     const page = pages.find((p) => p.templateId === templateId);
@@ -78,6 +88,7 @@ export default function GuideScreen({
   const startRun = (which: 'new' | 'master') => {
     setRun(which);
     setStep(0);
+    setKind(null);
     setCelebrate(false);
     setMode('wizard');
   };
@@ -85,7 +96,7 @@ export default function GuideScreen({
   if (narrow) return <UseALaptop onBack={onBack} />;
 
   return (
-    <div className="relative flex h-full w-full flex-col overflow-hidden bg-[#f8f9fa] font-ui text-[#2b2622]">
+    <div className="guide-root relative flex h-full w-full flex-col overflow-hidden bg-[#f8f9fa] font-ui text-[#2b2622]">
       <GuideHeader
         mode={mode}
         onBack={onBack}
@@ -112,12 +123,13 @@ export default function GuideScreen({
           run={run}
           steps={steps}
           step={step}
+          kind={kind}
+          kindStep={kindStep}
           celebrate={celebrate}
-          hasOpenDoc={hasOpenDoc}
+          onKind={(k) => setKind(k)}
           onStep={setStep}
           onFinish={() => setCelebrate(true)}
           onOpenTemplate={openTemplate}
-          onSeeSteps={() => setMode('reference')}
           onStartOver={() => {
             setCelebrate(false);
             setStep(0);
@@ -282,30 +294,43 @@ function Wizard({
   run,
   steps,
   step,
+  kind,
+  kindStep,
   celebrate,
-  hasOpenDoc,
+  onKind,
   onStep,
   onFinish,
   onOpenTemplate,
-  onSeeSteps,
   onStartOver,
 }: {
   run: 'new' | 'master';
   steps: WalkthroughStep[];
   step: number;
+  kind: FormatterKind | null;
+  /** Index of the article-or-poem step, or -1 when this run has no choice. */
+  kindStep: number;
   celebrate: boolean;
-  hasOpenDoc: boolean;
+  onKind: (kind: FormatterKind) => void;
   onStep: (n: number) => void;
   onFinish: () => void;
   onOpenTemplate: (templateId: string) => void;
-  onSeeSteps: () => void;
   onStartOver: () => void;
 }) {
-  const current = steps[Math.min(step, steps.length - 1)];
+  const raw = steps[Math.min(step, steps.length - 1)];
+  /**
+   * The step as the formatter should read it. Answering "article" or "poem"
+   * swaps in that kind's wording for the steps it changes - pasting, pictures,
+   * trimming the sheets and signing off all differ - so the question earns its
+   * place rather than being a branch that changed nothing.
+   */
+  const current: WalkthroughStep = kind
+    ? { ...raw, ...(raw.variants?.[kind] ?? {}), choices: raw.choices, variants: undefined }
+    : raw;
   const last = step === steps.length - 1;
-  const [picked, setPicked] = useState<string | null>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  /** True at the article-or-poem step until one of them has been picked. */
+  const needsKind = !!raw.choices && !kind;
 
   /**
    * A new step starts at the top of the card.
@@ -319,7 +344,6 @@ function Wizard({
     titleRef.current?.focus({ preventScroll: true });
   }, [step, run]);
 
-  useEffect(() => setPicked(null), [run]);
 
   if (celebrate) {
     return (
@@ -342,16 +366,6 @@ function Wizard({
               >
                 <RotateCcw size={15} />
                 Run through it again
-              </button>
-              <button
-                onClick={() => {
-                  onStartOver();
-                  onSeeSteps();
-                }}
-                className="flex items-center gap-1.5 rounded border border-gdoc-border bg-white px-3 py-2 text-[13px] text-[#3c4043] hover:border-bb-400"
-              >
-                <BookOpen size={15} />
-                See the steps
               </button>
             </div>
           </div>
@@ -404,28 +418,44 @@ function Wizard({
           </div>
 
           {current.choices && (
-            <div className="mt-4 flex flex-wrap gap-2">
-              {current.choices.map((c) => {
-                const active = picked === c.templateId;
-                return (
-                  <button
-                    key={c.templateId}
-                    onClick={() => {
-                      setPicked(c.templateId);
-                      onOpenTemplate(c.templateId);
-                    }}
-                    className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-[13px] font-medium transition-colors ${
-                      active
-                        ? 'border-bb-500 bg-bb-500 text-white'
-                        : 'border-gdoc-border bg-white text-[#3c4043] hover:border-bb-400'
-                    }`}
-                  >
-                    {active ? <Check size={15} /> : <FilePlus size={15} />}
-                    {c.label}
-                  </button>
-                );
-              })}
-            </div>
+            <>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {current.choices.map((c) => {
+                  const active = kind === c.kind;
+                  return (
+                    <button
+                      key={c.kind}
+                      // Picking an answer rewrites the steps below; the template
+                      // is opened separately, below, so answering does not throw
+                      // the formatter out of the walkthrough mid-sentence.
+                      onClick={() => onKind(c.kind)}
+                      aria-pressed={active}
+                      className={`flex items-center gap-2 rounded-lg border px-4 py-2.5 text-[13px] font-medium ${
+                        active
+                          ? 'border-bb-500 bg-bb-500 text-white shadow-sm'
+                          : 'border-gdoc-border bg-white text-[#3c4043] hover:border-bb-400'
+                      }`}
+                    >
+                      {active ? <Check size={15} /> : <FilePlus size={15} />}
+                      {c.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {kind && (
+                <button
+                  onClick={() =>
+                    onOpenTemplate(
+                      current.choices?.find((c) => c.kind === kind)?.templateId ?? '',
+                    )
+                  }
+                  className="mt-3 flex items-center gap-1.5 rounded border border-bb-500 bg-white px-3 py-2 text-[13px] font-medium text-bb-700 hover:bg-bb-500 hover:text-white"
+                >
+                  <Pencil size={15} />
+                  Open the {kind === 'poem' ? 'Poem' : 'Article'} template
+                </button>
+              )}
+            </>
           )}
 
           {current.preview && <StepPreview html={current.preview} />}
@@ -461,8 +491,14 @@ function Wizard({
             </button>
           ) : (
             <button
-              onClick={() => onStep(step + 1)}
-              className="flex items-center gap-2 rounded-lg bg-bb-500 px-5 py-2.5 text-[14px] font-medium text-white shadow-sm hover:bg-bb-600"
+              onClick={() => !needsKind && onStep(step + 1)}
+              disabled={needsKind}
+              title={needsKind ? 'Say which one you are formatting first' : undefined}
+              className={`flex items-center gap-2 rounded-lg px-5 py-2.5 text-[14px] font-medium shadow-sm ${
+                needsKind
+                  ? 'cursor-not-allowed bg-[#e8e1d8] text-gdoc-muted'
+                  : 'bg-bb-500 text-white hover:bg-bb-600'
+              }`}
             >
               Next
               <ArrowRight size={16} />
@@ -470,18 +506,27 @@ function Wizard({
           )}
         </div>
 
-        <div className="mt-6 flex flex-col items-center gap-2">
-          <button
-            onClick={onSeeSteps}
-            className="flex items-center gap-1.5 rounded-full border border-gdoc-border bg-white px-4 py-2 text-[13px] text-[#3c4043] transition-colors hover:border-bb-400 hover:text-bb-700"
-          >
-            <BookOpen size={15} className="text-bb-600" />
-            I want to see the steps
-          </button>
-          <p className="text-center text-[12px] text-gdoc-muted">
-            Leave the walkthrough and read the reference instead.
+        {needsKind && (
+          <p className="mt-3 text-center text-[12px] text-gdoc-muted">
+            Pick one above and the steps that follow are written for it.
           </p>
-        </div>
+        )}
+
+        {/* Which walkthrough this is, and a way back to the question that
+            decides it - the answer is worth being able to change. */}
+        {kind && kindStep >= 0 && step > kindStep && (
+          <div className="mt-6 flex items-center justify-center gap-2 text-[12px] text-gdoc-muted">
+            <span className="rounded-full border border-gdoc-border bg-white px-2.5 py-1 capitalize">
+              {kind} steps
+            </span>
+            <button
+              onClick={() => onStep(kindStep)}
+              className="rounded px-2 py-1 font-medium text-bb-700 hover:bg-bb-500/10"
+            >
+              change
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -723,7 +768,7 @@ const NARROW_AT = 700;
  */
 function UseALaptop({ onBack }: { onBack: () => void }) {
   return (
-    <div className="flex h-full w-full flex-col items-center justify-center gap-4 bg-[#f8f9fa] px-6 text-center font-ui text-[#2b2622]">
+    <div className="guide-root flex h-full w-full flex-col items-center justify-center gap-4 bg-[#f8f9fa] px-6 text-center font-ui text-[#2b2622]">
       <span className="grid h-14 w-14 place-items-center rounded-full bg-bb-500/15">
         <Laptop size={28} className="text-bb-600" />
       </span>

@@ -539,6 +539,9 @@ export const GUIDE_WORKFLOW_STEPS: GuideStep[] = [
 
 /* ---- The two interactive walkthroughs ----------------------------------- */
 
+/** Which kind of piece a walkthrough is about. */
+export type FormatterKind = 'article' | 'poem';
+
 /** One step of an interactive walkthrough, as the `/guide` wizard shows it. */
 export interface WalkthroughStep {
   /** Imperative one-liner. */
@@ -546,8 +549,20 @@ export interface WalkthroughStep {
   body: string;
   /** The menu path or button that does the work. */
   click?: string;
-  /** Options the formatter picks between; picking one opens its template. */
-  choices?: { label: string; templateId: string }[];
+  /**
+   * The options the formatter picks between. Picking one is what tells the
+   * walkthrough which steps to show: an article is pasted into two columns and
+   * illustrated, a poem is set centred in one and usually has no picture at
+   * all, so the two cannot share the same middle steps. The choice also offers
+   * the template it belongs to.
+   */
+  choices?: { label: string; templateId: string; kind: FormatterKind }[];
+  /**
+   * What this step turns into once the formatter has said what they are
+   * editing. A step with no variant for the chosen kind reads the same either
+   * way, and its own `title`/`body` are the fallback.
+   */
+  variants?: Partial<Record<FormatterKind, Partial<WalkthroughStep>>>;
   /** Background for the Formatter Master, who does this once per issue. */
   aside?: string;
   /** A mock-up, in the page's own HTML (see `GuideStep.preview`). */
@@ -563,11 +578,6 @@ export const NEW_FORMATTER_STEPS: WalkthroughStep[] = [
     title: 'Get your assignment',
     body: 'Open the Formatting sheet in the Baulko Bulletin Google Classroom and put your name next to the one piece you are going to format. If two people want the same piece, settle it in the Classroom before you start - not here.',
     click: 'Google Classroom ▸ the Formatting sheet',
-    preview: `<table style="width:100%;border-collapse:collapse;font-family:${BODY};font-size:12pt;color:#262626;">
-  <tr><td style="padding:4px 6px;border-bottom:1px solid #e5ddd0;">1 - Article</td><td style="padding:4px 6px;border-bottom:1px solid #e5ddd0;color:#8a8378;">[Headline]</td><td style="padding:4px 6px;border-bottom:1px solid #e5ddd0;${MARK}">your name</td></tr>
-  <tr><td style="padding:4px 6px;border-bottom:1px solid #e5ddd0;">2 - Puzzle</td><td style="padding:4px 6px;border-bottom:1px solid #e5ddd0;color:#8a8378;">[Puzzle title]</td><td style="padding:4px 6px;border-bottom:1px solid #e5ddd0;color:#8a8378;">taken</td></tr>
-  <tr><td style="padding:4px 6px;">3 - Poem</td><td style="padding:4px 6px;color:#8a8378;">[Poem title]</td><td style="padding:4px 6px;color:#8a8378;"></td></tr>
-</table>`,
   },
   {
     title: 'Keep this tab for the steps, and edit in a new tab',
@@ -576,10 +586,10 @@ export const NEW_FORMATTER_STEPS: WalkthroughStep[] = [
   },
   {
     title: 'Are you formatting an article or a poem?',
-    body: 'Articles are two-column pages; poems are single-column with the title, byline, rule and marker as separate pieces. Pick the one you are formatting - the remaining steps are the same either way.',
+    body: 'This is the one question the walkthrough cannot answer for you, and it changes what comes next: an article is two columns of prose with pictures through it, a poem is set centred in a single column and almost never shares its sheet. Pick one and the steps below are written for it.',
     choices: [
-      { label: 'An article - open that template', templateId: 'bulletin-article' },
-      { label: 'A poem - open that template', templateId: 'bulletin-poem' },
+      { label: 'An article', templateId: 'bulletin-article', kind: 'article' },
+      { label: 'A poem', templateId: 'bulletin-poem', kind: 'poem' },
     ],
   },
   {
@@ -594,24 +604,69 @@ export const NEW_FORMATTER_STEPS: WalkthroughStep[] = [
 </div>`,
   },
   {
-    title: 'Paste the article into the frames',
+    title: 'Paste the writing into the body frame',
     body: 'Click the body frame and paste the writing over the template\'s lorem text, then style the headline and byline the way the page asks. Nothing you type should land outside a frame.',
     click: 'Click the body frame ▸ Ctrl+V',
+    variants: {
+      article: {
+        title: 'Paste the article into the two columns',
+        body: "The page opens with two columns and a rule between them, and the copy fills the first column to the bottom before it carries on in the second. Click the body frame, replace the lorem text with the real article, then set the headline in Franklin Gothic Heavy with the byline under it in grey Arial.",
+      },
+      poem: {
+        title: 'Type the poem centred, in one column',
+        body: 'A poem keeps to a single column and sits centred on the sheet: title on top, byline under it, then the stanzas. Paste it in and keep each stanza as its own paragraph - the frame re-flows the lines for you, so nothing has to be placed line by line.',
+        preview: `<div style="border:1px solid #e5ddd0;background:#fff;padding:16px 20px;text-align:center;${MARK}">
+  <p style="margin:0;font-family:${FG};font-size:24px;color:#3f3f3f;">[Poem Title]</p>
+  <p style="margin:4px 0 12px;font-family:${BYLINE};font-size:14px;color:#808080;">By [Poet&rsquo;s name]</p>
+  <p style="margin:0;font-family:${BODY};font-size:13pt;line-height:1.6;color:#262626;">It is pleasant, indeed, while the summer lasts,<br>with the mild pheasant&rsquo;s song on the air;<br>but now I feel the northern wind&rsquo;s blast -<br>its severe weather strong.</p>
+</div>`,
+      },
+    },
   },
   {
     title: 'Insert the images and size them',
     body: 'Insert ▸ Image… for each picture, then drag a corner handle to size it. Fit: contain keeps the whole picture, Fit: cover crops it to fill the frame - artwork and puzzle pages open with the frame already full-page.',
     click: 'Insert ▸ Image…',
+    variants: {
+      article: {
+        title: "Insert the article's pictures",
+        body: 'Insert ▸ Image… for each picture and leave Fit on contain so nothing is cropped, then drag a corner handle to size it. Keep a picture inside one column: type does not flow around an image here, so one dropped across the rule pushes the column out of shape.',
+      },
+      poem: {
+        title: 'Add artwork only if the poem came with it',
+        body: 'Most poems are words and nothing else, and a lone picture on an otherwise empty sheet reads like a mistake. If this one did come with artwork, put it above the title or below the last stanza - never between stanzas - and set Fit: contain.',
+      },
+    },
   },
   {
     title: 'Delete the pages you do not need',
-    body: 'The template came with more sheets than your piece fills. Right-click the extra thumbnails in the pages pane and delete them; the headers and page numbers renumber themselves.',
+    body: 'Every template opens with more sheets than one piece fills. Right-click the extra thumbnails in the pages pane and delete them; the running head and page numbers renumber themselves.',
     click: 'Pages pane ▸ right-click ▸ Delete page',
+    variants: {
+      article: {
+        title: 'Trim the article to the sheets it really needs',
+        body: 'The Article template opens a two-column start page, several continuation sheets and an extras sheet, and most articles run two or three. Delete the surplus in the pages pane once the copy has stopped flowing onto them; a sheet holding only a line or two is a sign to tighten the piece, not to print a nearly empty page.',
+      },
+      poem: {
+        title: 'Delete every sheet the poem does not fill',
+        body: 'A poem is one sheet, so delete the rest in the pages pane. If it genuinely runs past one sheet, let the frame re-flow into a narrower column rather than keeping a second sheet for a handful of lines.',
+      },
+    },
   },
   {
     title: 'Add the tombstone to the last page',
     body: 'Insert ▸ Tombstone puts the end-of-piece marker in the bottom-right corner of the last sheet of the piece - outside the master page\'s frame, so it never lands in the type or on pages that do not need it. Right-aligned for an article, centred under the last line for a poem.',
     click: 'Insert ▸ Tombstone',
+    variants: {
+      article: {
+        title: 'Sign the article off with the tombstone',
+        body: 'Insert ▸ Tombstone. On an article the marker follows the end of the prose, landing in the bottom-right corner of the sheet the article finishes on - the printer&rsquo;s full stop for the piece.',
+      },
+      poem: {
+        title: 'Sign the poem off with the tombstone',
+        body: 'Insert ▸ Tombstone. A poem takes the same marker as any other piece, in the bottom-right corner of its sheet. The Design Bible asks for it centred under the last stanza; the app pins it to the corner so it stays outside the master page frame and clear of the folio.',
+      },
+    },
     aside: 'A piece which ends mid-page still gets its marker on that page - the marker is furniture, and it can be removed but never dragged.',
     preview: `<div style="position:relative;height:110px;border:1px solid #e5ddd0;background:#fff;">
   <span style="position:absolute;left:10px;bottom:8px;font-family:${BODY};font-size:11pt;color:#8a8378;">1 | September 2026</span>

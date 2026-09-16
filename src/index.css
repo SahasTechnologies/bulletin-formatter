@@ -1140,3 +1140,40 @@ body {
     opacity: 0;
   }
 }
+
+/* ---- Button feedback ----------------------------------------------------
+   Every button in the app dips slightly under the pointer, so a press is felt
+   as well as seen; this deliberately sets no transition-property, so the
+   components that already animate their own colours keep doing that (the press
+   itself should be instant, not eased). The guide's buttons, which are a
+   walkthrough rather than a toolbar, also lift on hover. */
+button:not(:disabled):active {
+  transform: scale(0.97);
+}
+
+.guide-root button:not(:disabled) {
+  transition:
+    transform 120ms ease-out,
+    box-shadow 120ms ease-out,
+    background-color 150ms ease-out,
+    border-color 150ms ease-out,
+    color 150ms ease-out;
+}
+
+.guide-root button:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgb(43 38 34 / 10%);
+}
+
+.guide-root button:not(:disabled):active {
+  transform: translateY(0) scale(0.97);
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button:not(:disabled):active,
+  .guide-root button:not(:disabled):hover,
+  .guide-root button:not(:disabled):active {
+    transform: none;
+  }
+}
