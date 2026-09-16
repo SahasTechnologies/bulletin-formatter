@@ -6,7 +6,7 @@
  * match, then writes a Page of Contents listing each part with the page it
  * starts on.
  */
-import { splitIntoBoxes } from '../components/DocumentCanvas';
+import { splitIntoBoxes } from './frames';
 import { parseBulletin, type BulletinDoc } from './format';
 
 /** A4 portrait - the page every bulletin is laid out for. */
@@ -220,9 +220,12 @@ export function mergeIssue(inputs: MergeInput[], opts: MergeOptions): MergeResul
   const ordered: MergeInput[] = [...front, ...body, ...back, ...tail];
   const wantContents = opts.makeContents && importedContents.length === 0;
   // The generated list starts on the page after the covers and is counted
-  // before the numbering pass: every part plus the contents page itself is one
-  // entry, and a long issue spills onto a second contents sheet.
-  const contentsPages = wantContents ? contentsSheetCount(ordered.length + 1) : 0;
+  // before the numbering pass. Exactly one entry per part is listed (the
+  // contents page does not list itself), so the sheets reserved here must be
+  // the same count `contentsSheets` will lay down - one entry fewer than this
+  // used to assume, which shifted every listed page number by one whenever the
+  // issue came to exactly 14 or 28 parts.
+  const contentsPages = wantContents ? contentsSheetCount(ordered.length) : 0;
 
   // Page 1 is the cover; the generated contents occupies `contentsPages`
   // pages after the covers. Everything after that shifts down by that much.

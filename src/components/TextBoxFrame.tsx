@@ -5,9 +5,7 @@ import {
   FRAME_PAD,
   type TextBox,
 } from '../lib/textbox';
-
-const MIN_W = 60;
-const MIN_H = 40;
+import { MIN_H, MIN_W } from '../lib/frames';
 /** Pixels of movement before a click on a selected frame turns into a drag. */
 const DRAG_THRESHOLD = 3;
 

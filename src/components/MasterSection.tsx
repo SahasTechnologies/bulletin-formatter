@@ -20,6 +20,7 @@ import {
   type MasterDef,
   type MasterSet,
 } from '../lib/master';
+import { useFeedback } from './Feedback';
 
 /**
  * The **Master Page** contextual tab - Publisher shows it above the sheet while
@@ -47,6 +48,7 @@ export default function MasterSection({
   /** Sheets in the publication - lets Apply To offer the whole range. */
   pageCount: number;
 }) {
+  const { toast, confirm } = useFeedback();
   const [applyOpen, setApplyOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -66,15 +68,16 @@ export default function MasterSection({
   const active = set.masters.find((m) => m.id === set.activeId) ?? set.masters[0];
 
   /** Publisher's Two Page Master: warn before the left sheet is dropped. */
-  const toggleTwoPage = () => {
+  const toggleTwoPage = async () => {
     if (!active) return;
-    if (
-      active.twoPage &&
-      !window.confirm(
-        `Make master ${active.id} a one-page master? The furniture on its left (even) sheet will be removed and replaced by the right sheet's.`,
-      )
-    ) {
-      return;
+    if (active.twoPage) {
+      const ok = await confirm({
+        title: `Make master ${active.id} a one-page master?`,
+        body: `The furniture on its left (even) sheet will be removed and replaced by the right sheet's.`,
+        confirmLabel: 'Make one-page',
+        danger: true,
+      });
+      if (!ok) return;
     }
     onChange((s) => ({
       ...s,
@@ -99,20 +102,23 @@ export default function MasterSection({
     });
   };
 
-  const remove = () => {
+  const remove = async () => {
     if (!active) return;
     if (set.masters.length <= 1) {
-      window.alert('A publication needs at least one master page.');
+      toast('A publication needs at least one master page.', {
+        kind: 'error',
+        detail: 'Rename or repurpose this one instead of deleting it.',
+      });
       return;
     }
     const fallback = set.masters.find((m) => m.id !== active.id);
-    if (
-      !window.confirm(
-        `Delete master page ${active.id}? Any page using it will be given master page ${fallback?.id ?? 'A'} instead.`,
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: `Delete master page ${active.id}?`,
+      body: `Any page using it will be given master page ${fallback?.id ?? 'A'} instead.`,
+      confirmLabel: 'Delete master',
+      danger: true,
+    });
+    if (!ok) return;
     onChange((s) => {
       const assignment: Record<string, string> = {};
       for (const [page, id] of Object.entries(s.assignment)) {
@@ -264,14 +270,16 @@ export default function MasterSection({
           initialDescription={defaultDescription(nextMasterId(set))}
           twoPageChoice
           onCancel={() => setAddOpen(false)}
+          /* Publisher refuses a Page ID that is already taken - the dialog says
+             so in place, instead of raising a second window on top of itself. */
+          validate={(clean) =>
+            set.masters.some((m) => m.id === clean)
+              ? `Master page ${clean} already exists - pick another Page ID.`
+              : null
+          }
           onSubmit={(id, description, twoPage) => {
             const clean = sanitizeId(id);
             if (!clean) return;
-            // Publisher refuses a Page ID that is already taken.
-            if (set.masters.some((m) => m.id === clean)) {
-              window.alert(`Master page ${clean} already exists - pick another Page ID.`);
-              return;
-            }
             setAddOpen(false);
             onChange((s) => ({
               ...s,
@@ -306,13 +314,14 @@ export default function MasterSection({
           initialId={active.id}
           initialDescription={active.description}
           onCancel={() => setRenameOpen(false)}
+          validate={(clean) =>
+            clean !== set.activeId && set.masters.some((m) => m.id === clean)
+              ? `Master page ${clean} already exists - pick another Page ID.`
+              : null
+          }
           onSubmit={(id, description) => {
             const clean = sanitizeId(id);
             if (!clean) return;
-            if (clean !== set.activeId && set.masters.some((m) => m.id === clean)) {
-              window.alert(`Master page ${clean} already exists - pick another Page ID.`);
-              return;
-            }
             setRenameOpen(false);
             onChange((s) => {
               const assignment: Record<string, string> = {};
@@ -470,6 +479,7 @@ function MasterDialog({
   initialId,
   initialDescription,
   twoPageChoice = false,
+  validate,
   onCancel,
   onSubmit,
 }: {
@@ -479,12 +489,16 @@ function MasterDialog({
   initialId: string;
   initialDescription: string;
   twoPageChoice?: boolean;
+  /** Reject a Page ID the publication already uses; the message is shown in
+      place, so a single typo costs one round trip, not two. */
+  validate?: (id: string) => string | null;
   onCancel: () => void;
   onSubmit: (id: string, description: string, twoPage: boolean) => void;
 }) {
   const [id, setId] = useState(initialId);
   const [description, setDescription] = useState(initialDescription);
   const [twoPage, setTwoPage] = useState(false);
+  const [error, setError] = useState('');
   const first = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -492,7 +506,17 @@ function MasterDialog({
     first.current?.select();
   }, []);
 
-  const submit = () => id.trim() && onSubmit(id, description, twoPage);
+  const submit = () => {
+    const clean = sanitizeId(id);
+    if (!clean) return;
+    const problem = validate?.(clean);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    setError('');
+    onSubmit(id, description, twoPage);
+  };
 
   return (
     <div
@@ -515,9 +539,20 @@ function MasterDialog({
           ref={first}
           value={id}
           maxLength={2}
-          onChange={(e) => setId(sanitizeId(e.target.value) || e.target.value.slice(0, 1))}
-          className="mb-3 w-16 rounded-md border border-gdoc-border px-2 py-1.5 text-center text-[14px] uppercase outline-none focus:border-bb-400"
+          onChange={(e) => {
+            setId(sanitizeId(e.target.value) || e.target.value.slice(0, 1));
+            setError('');
+          }}
+          aria-invalid={Boolean(error)}
+          className={`mb-1 w-16 rounded-md border px-2 py-1.5 text-center text-[14px] uppercase outline-none focus:border-bb-400 ${
+            error ? 'border-red-400' : 'border-gdoc-border'
+          }`}
         />
+        {error ? (
+          <p className="mb-3 text-[11.5px] text-red-600">{error}</p>
+        ) : (
+          <div className="mb-3" />
+        )}
 
         <label className="mb-1 block text-[12px] text-gdoc-muted">Description</label>
         <input

@@ -21,9 +21,10 @@ import { GoogleFontProvider, isGoogleFont, loadGoogleFont } from './components/G
 import MasterSection from './components/MasterSection';
 import GuideScreen from './components/GuideScreen';
 import MergeDialog from './components/MergeDialog';
+import { FeedbackProvider, useFeedback } from './components/Feedback';
 import { navigate, usePath } from './lib/router';
 import { mergeIssue, type MergeResult } from './lib/merge';
-import { splitIntoBoxes, TRANSPARENT_GIF } from './components/DocumentCanvas';
+import { splitIntoBoxes, TRANSPARENT_GIF } from './lib/frames';
 import { sanitizeFrameText } from './lib/frameStyle';
 import { tombstoneCorner } from './lib/marker';
 import { GUIDE_PAGES, type GuidePage } from './data/designGuide';
@@ -483,7 +484,20 @@ const SHORTCUTS: [string, string][] = [
 
 type DialogKind = null | 'about' | 'shortcuts' | 'wordcount' | 'search' | 'details' | 'dictionary';
 
+/**
+ * The app itself is a thin provider: everything below it needs toasts and
+ * confirmation dialogs, and `useFeedback` is only legal inside the provider.
+ */
 export default function App() {
+  return (
+    <FeedbackProvider>
+      <AppShell />
+    </FeedbackProvider>
+  );
+}
+
+function AppShell() {
+  const { toast, confirm } = useFeedback();
   const [screen, setScreen] = useState<'home' | 'editor'>('home');
   /** Files queued for the Merge dialog (null = dialog closed). */
   const [mergeFiles, setMergeFiles] = useState<File[] | null>(null);
@@ -860,11 +874,23 @@ export default function App() {
     setScreen('editor');
   }, []);
 
-  const deleteRecent = useCallback((id: string) => {
-    // `purgeDoc` also drops the document's snapshots and reclaims the media
-    // nothing else uses; `deleteDoc` only removed the entry itself.
-    void purgeDoc(id).then((list) => setRecentDocs(list));
-  }, []);
+  const deleteRecent = useCallback(
+    (id: string) => {
+      const doc = recentDocs.find((d) => d.id === id);
+      void confirm({
+        title: doc ? `Delete “${doc.title}”?` : 'Delete this bulletin?',
+        body: 'It is removed from this device along with its version history and any pictures or PDFs nothing else uses. This cannot be undone.',
+        confirmLabel: 'Delete',
+        danger: true,
+      }).then((ok) => {
+        if (!ok) return;
+        // `purgeDoc` also drops the document's snapshots and reclaims the media
+        // nothing else uses; `deleteDoc` only removed the entry itself.
+        void purgeDoc(id).then((list) => setRecentDocs(list));
+      });
+    },
+    [confirm, recentDocs],
+  );
 
   /** Rename a document straight from its card on the home screen. */
   const renameRecent = useCallback((id: string, next: string) => {
@@ -1055,7 +1081,10 @@ export default function App() {
     reader.onload = () => {
       const parsed = parseBulletin(String(reader.result));
       if (!parsed) {
-        window.alert("That doesn't look like a Bulletin file.");
+        toast("That doesn't look like a Bulletin file.", {
+          kind: 'error',
+          detail: 'Open a .bulletin or .json file saved from this app.',
+        });
         return;
       }
       const doc: StoredDocument = {
@@ -1090,7 +1119,7 @@ export default function App() {
       setScreen('editor');
     };
     reader.readAsText(file);
-  }, []);
+  }, [toast]);
 
   const pickImage = useCallback((onPick: (f: File) => void) => {
     const input = document.createElement('input');
@@ -1171,7 +1200,10 @@ export default function App() {
             reader.onload = () => {
               const parsed = parseBulletin(String(reader.result));
               if (!parsed) {
-                window.alert("That doesn't look like a Bulletin file.");
+                toast("That doesn't look like a Bulletin file.", {
+                  kind: 'error',
+                  detail: 'Open a .bulletin or .json file saved from this app.',
+                });
                 return;
               }
               setTitle(parsed.title);
@@ -1205,7 +1237,14 @@ export default function App() {
           break;
         case 'file.trash': {
           const d = activeDocRef.current;
-          if (d && window.confirm(`Move “${d.title}” to trash? This deletes it from this device.`)) {
+          if (!d) break;
+          void confirm({
+            title: `Move “${d.title}” to trash?`,
+            body: 'This deletes the bulletin from this device, together with its version history and any pictures or PDFs nothing else uses. This cannot be undone.',
+            confirmLabel: 'Move to trash',
+            danger: true,
+          }).then((ok) => {
+            if (!ok) return;
             const gone = d.id;
             activeDocRef.current = null;
             setActiveDoc(null);
@@ -1213,7 +1252,7 @@ export default function App() {
             // Delete the document, its version snapshots and any picture or
             // PDF blob nothing else still refers to.
             void purgeDoc(gone).then((list) => setRecentDocs(list));
-          }
+          });
           break;
         }
         case 'file.versions':
@@ -1288,7 +1327,12 @@ export default function App() {
           navigator.clipboard
             ?.readText()
             .then((t) => ed.exec('insertText', t))
-            .catch(() => window.alert('Clipboard access was blocked by the browser.'));
+            .catch(() =>
+              toast('Clipboard access was blocked by the browser.', {
+                kind: 'error',
+                detail: 'Paste with Ctrl+V instead, or allow clipboard access for this page.',
+              }),
+            );
           break;
         case 'edit.selectall': ed.exec('selectAll'); break;
         case 'edit.delete': ed.exec('delete'); break;
@@ -1412,7 +1456,11 @@ export default function App() {
             ed.exec('insertText', id.slice('insert.char.'.length));
             break;
           }
-          const styleMatch = /^style\.(.+)$/.exec(id);
+          // Two routes onto the same block styles: the Text ▸ Styles submenu
+          // sends `style.h1`…, and the Format menu lists Heading 1-4 as items
+          // of their own (`format.h1`…). The Format ones matched nothing at
+          // all - no case, no prefix - so those four menu items were dead.
+          const styleMatch = /^(?:style|format)\.(.+)$/.exec(id);
           if (styleMatch) {
             const map: Record<string, { tag: string; label: string }> = {
               normal: { tag: 'p', label: 'Normal text' },
@@ -1526,7 +1574,12 @@ export default function App() {
         navigator.clipboard
           ?.readText()
           .then((t) => ed.exec('insertText', t))
-          .catch(() => window.alert('Clipboard access was blocked by the browser.'));
+          .catch(() =>
+            toast('Clipboard access was blocked by the browser.', {
+              kind: 'error',
+              detail: 'Paste with Ctrl+V instead, or allow clipboard access for this page.',
+            }),
+          );
       } else if (EDITING_KEYS.has(k) && !isTypingTarget(e.target)) {
         // Bold / italic / underline / undo / redo / clipboard are advertised in
         // the shortcut list, but the browser only honours them natively while
@@ -1549,7 +1602,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [exportBulletin, run, openFind, screen]);
+  }, [exportBulletin, run, openFind, screen, toast, confirm]);
 
   const page = useMemo(() => {
     const base = PAGE_SIZES[pageName];

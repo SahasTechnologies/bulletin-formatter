@@ -142,10 +142,18 @@ function stripEmbeddedMedia(boxesJson?: string): string | undefined {
       if (typeof b?.src === 'string' && b.src.startsWith('data:')) {
         const id = inFlight.get(b.src) ?? newAssetId(b.kind === 'pdf' ? 'pdf' : 'img');
         inFlight.set(b.src, id);
-        void saveMediaDataUrl(id, b.src).then(() => {
-          confirmedAssets.add(id);
-          inFlight.delete(b.src);
-        });
+        void saveMediaDataUrl(id, b.src)
+          .then(() => {
+            confirmedAssets.add(id);
+            inFlight.delete(b.src);
+          })
+          // Nobody is left to report to: this only runs when the document had
+          // no room to store its own pictures, so a failed write just means
+          // that picture is gone. Swallow it rather than raise an unhandled
+          // rejection in the middle of someone's save.
+          .catch(() => {
+            inFlight.delete(b.src);
+          });
         b.src = id;
       }
     }
