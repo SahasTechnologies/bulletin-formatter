@@ -129,7 +129,6 @@ export default function GuideScreen({
           onKind={(k) => setKind(k)}
           onStep={setStep}
           onFinish={() => setCelebrate(true)}
-          onOpenTemplate={openTemplate}
           onStartOver={() => {
             setCelebrate(false);
             setStep(0);
@@ -300,7 +299,6 @@ function Wizard({
   onKind,
   onStep,
   onFinish,
-  onOpenTemplate,
   onStartOver,
 }: {
   run: 'new' | 'master';
@@ -313,7 +311,6 @@ function Wizard({
   onKind: (kind: FormatterKind) => void;
   onStep: (n: number) => void;
   onFinish: () => void;
-  onOpenTemplate: (templateId: string) => void;
   onStartOver: () => void;
 }) {
   const raw = steps[Math.min(step, steps.length - 1)];
@@ -443,17 +440,15 @@ function Wizard({
                 })}
               </div>
               {kind && (
-                <button
-                  onClick={() =>
-                    onOpenTemplate(
-                      current.choices?.find((c) => c.kind === kind)?.templateId ?? '',
-                    )
-                  }
-                  className="mt-3 flex items-center gap-1.5 rounded border border-bb-500 bg-white px-3 py-2 text-[13px] font-medium text-bb-700 hover:bg-bb-500 hover:text-white"
-                >
-                  <Pencil size={15} />
-                  Open the {kind === 'poem' ? 'Poem' : 'Article'} template
-                </button>
+                // No button here on purpose. Step two sends the formatter to a
+                // tab of their own to do the work, so a button that opens the
+                // template *in this one* would contradict the step above it.
+                // The guide says which template; opening it is their tab's job.
+                <p className="mt-3 rounded-lg border border-gdoc-border bg-[#f8f9fa] p-3 text-[12px] leading-relaxed text-[#5f5a53]">
+                  In your editing tab, click the{' '}
+                  <b className="text-[#3c4043]">{kind === 'poem' ? 'Poem' : 'Article'}</b> template
+                  on the home screen. Every step below is written for it.
+                </p>
               )}
             </>
           )}
@@ -756,10 +751,12 @@ function Reference({
  * Below this width the guide's own two panes cannot both fit beside each other
  * (240px of contents plus a readable column of steps), which is the point at
  * which the *whole* job - a sheet, the frames, the pages - stops being workable.
- * A phone is 390-430px and a portrait tablet around 768px, so this is the line
- * between "cramped but possible" and "not the right device".
+ *
+ * 640 not 768: a laptop window dragged to half the screen is around 700px and
+ * telling somebody already on a laptop to go and find a laptop is silly. This
+ * is a phone (390-430) or a tablet held upright.
  */
-const NARROW_AT = 700;
+const NARROW_AT = 640;
 
 /**
  * The formatter lays the sheet, the frame list and the pages pane side by side

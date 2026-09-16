@@ -581,12 +581,12 @@ export const NEW_FORMATTER_STEPS: WalkthroughStep[] = [
   },
   {
     title: 'Keep this tab for the steps, and edit in a new tab',
-    body: 'This tab is your reference - the steps stay here while you work. Open a new tab (Ctrl+T), open Bulletin Formatter in it, and do the actual editing there. Come back here whenever you are not sure what is next.',
+    body: 'This tab is your reference and nothing else: it keeps the steps while you work. Open a new tab (Ctrl+T), open Bulletin Formatter in it, and do all the editing over there - everything from here on happens in that tab, and you can look back at these steps without losing your place.',
     click: 'Ctrl+T ▸ open Bulletin Formatter',
   },
   {
     title: 'Are you formatting an article or a poem?',
-    body: 'This is the one question the walkthrough cannot answer for you, and it changes what comes next: an article is two columns of prose with pictures through it, a poem is set centred in a single column and almost never shares its sheet. Pick one and the steps below are written for it.',
+    body: 'This is the one question the walkthrough cannot answer for you, and it changes what comes next: an article is two columns of prose with pictures through it, a poem is set centred in a single column and almost never shares its sheet. Answer here and the steps below are rewritten for your answer - nothing opens in this tab, because the template is opened in your editing tab.',
     choices: [
       { label: 'An article', templateId: 'bulletin-article', kind: 'article' },
       { label: 'A poem', templateId: 'bulletin-poem', kind: 'poem' },
@@ -610,7 +610,7 @@ export const NEW_FORMATTER_STEPS: WalkthroughStep[] = [
     variants: {
       article: {
         title: 'Paste the article into the two columns',
-        body: "The page opens with two columns and a rule between them, and the copy fills the first column to the bottom before it carries on in the second. Click the body frame, replace the lorem text with the real article, then set the headline in Franklin Gothic Heavy with the byline under it in grey Arial.",
+        body: "The Article template opens with two columns and a rule between them, and the copy fills the first column to the bottom before it carries on in the second. Click the body frame, replace the lorem text with the real article, then set the headline in Franklin Gothic Heavy with the byline under it in grey Arial.",
       },
       poem: {
         title: 'Type the poem centred, in one column',
