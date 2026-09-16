@@ -20,6 +20,47 @@ export const FRAME_PAD = 4;
 export const FRAME_COL_GAP = 28;
 
 /**
+ * The house grey of every separating rule: the line between a frame's columns
+ * *and* the line under a byline (the article and poem start pages, the contents
+ * page, the merged issue). One colour everywhere, so the sheet reads as one
+ * design rather than as lines that nearly match.
+ */
+export const COLUMN_RULE_COLOR = '#d9d3c9';
+/** House thickness of those rules, px - the column rule sets the weight for the
+    byline dividers too, so the two are always the same line. */
+export const COLUMN_RULE_WIDTH = 2;
+/** Heaviest rule the frame toolbar will set, px - past this it is a band, not
+    a rule between columns. */
+export const COLUMN_RULE_MAX_WIDTH = 8;
+
+/**
+ * Where a frame's column rules sit, as x offsets from the *content* box.
+ *
+ * CSS draws a `column-rule` with square ends and no way to round them, so the
+ * rules are drawn as rounded bars instead, which means working out where they
+ * go: equal columns with `gap` between them, so the rule between column `k` and
+ * `k + 1` is centred in the gutter. Offsets point at the rule's left edge,
+ * taking its own thickness into account.
+ */
+export function columnRuleOffsets(
+  cols: number,
+  contentW: number,
+  gap = FRAME_COL_GAP,
+  thickness = COLUMN_RULE_WIDTH,
+): number[] {
+  const n = Math.max(1, Math.round(cols));
+  if (n < 2) return [];
+  const w = Math.max(24, contentW);
+  const colW = (w - (n - 1) * gap) / n;
+  const out: number[] = [];
+  for (let k = 1; k < n; k++) {
+    const centre = k * colW + (k - 0.5) * gap;
+    out.push(centre - thickness / 2);
+  }
+  return out;
+}
+
+/**
  * Just the geometry of a frame - everything the flow engine needs to answer
  * "how much text fits here?". Kept separate (and `html`-free) so a caller can
  * measure a *proposed* frame - a chain being redistributed, a frame about to be
@@ -90,6 +131,15 @@ export interface TextBox extends FrameGeom {
       while set, the frame draws a dashed "click to add …" cover and a click
       opens the image picker instead of selecting. Cleared once a picture is in. */
   ph?: string;
+  /**
+   * Colour of the rule drawn between columns, for a frame with more than one.
+   * `'none'` switches the rule off; omitted means the house grey
+   * (`COLUMN_RULE_COLOR`, the same tone as the frame borders).
+   */
+  rule?: string;
+  /** Thickness of that rule in px, 1-8. Omitted means the house weight -
+      which is also the weight of the byline rules the templates ship. */
+  ruleWidth?: number;
   /** Alignment of text inside the frame - what text with no alignment of its
       own falls back to, so a wholesale retype stays put instead of jumping
       left. */

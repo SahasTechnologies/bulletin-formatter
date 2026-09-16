@@ -15,12 +15,22 @@ import {
 import { TEMPLATES, type Template } from '../data/templates';
 import type { StoredDocument } from '../lib/storage';
 import { fuzzyMatchFields, type FieldedMatch } from '../lib/fuzzy';
+import { MIN_H, MIN_W } from '../lib/frames';
+import {
+  columnRuleOffsets,
+  COLUMN_RULE_COLOR,
+  COLUMN_RULE_WIDTH,
+  FRAME_COL_GAP,
+  FRAME_PAD,
+} from '../lib/textbox';
 
 interface HomeScreenProps {
   recentDocs: StoredDocument[];
   onOpenTemplate: (tpl: Template) => void;
   onOpenRecent: (doc: StoredDocument) => void;
   onDeleteRecent: (id: string) => void;
+  /** Delete every saved document at once, from the Recent documents header. */
+  onDeleteAllRecents: () => void;
   /** Rename a saved document from its card (Enter or blur commits). */
   onRenameRecent: (id: string, title: string) => void;
   onImportFile: (file: File) => void;
@@ -103,7 +113,13 @@ const FURNITURE_INSET = 48;
  * 80px top one. Previews used to pad 56/64, which drew the type wider and
  * higher up the sheet than the page it stands for.
  */
-const PAGE_PADDING = { padding: '80px 96px' } as const;
+const PAGE_INSET = { top: 80, left: 96, right: 96, bottom: 80 } as const;
+const PAGE_PADDING = {
+  padding: `${PAGE_INSET.top}px ${PAGE_INSET.right}px`,
+} as const;
+/** The content column's width on a previewed sheet - the same 602px the
+    templates ask for, and the width a two-column rule is measured against. */
+const PAGE_CONTENT_W = DOC_WIDTH - PAGE_INSET.left - PAGE_INSET.right;
 
 /** Master furniture styles, matching the sheet's own running head and folio. */
 const FURNITURE_STYLE = {
@@ -144,6 +160,7 @@ export default function HomeScreen({
   onOpenTemplate,
   onOpenRecent,
   onDeleteRecent,
+  onDeleteAllRecents,
   onRenameRecent,
   onImportFile,
   onMergeFiles,
@@ -425,7 +442,21 @@ export default function HomeScreen({
 
         {/* ---- Recent documents ---- */}
         <section className="mt-10">
-          <h2 className="mb-1 text-[18px] font-medium text-[#3c4043]">Recent documents</h2>
+          <div className="mb-1 flex items-baseline justify-between gap-3">
+            <h2 className="text-[18px] font-medium text-[#3c4043]">Recent documents</h2>
+            {/* Only offered when there is something to delete - a "Delete
+                all" over an empty list is a button that does nothing. */}
+            {recentDocs.length > 0 && (
+              <button
+                onClick={onDeleteAllRecents}
+                title="Delete every document saved in this browser"
+                className="flex flex-none items-center gap-1.5 rounded px-2 py-1 text-[13px] text-gdoc-muted transition-colors hover:bg-red-50 hover:text-red-600"
+              >
+                <Trash2 size={14} />
+                Delete all
+              </button>
+            )}
+          </div>
           <p className="mb-4 text-[13px] text-gdoc-muted">
             {recentDocs.length === 0
               ? 'Documents you open will appear here. Pick a template above to get started.'
@@ -618,11 +649,136 @@ function CoverThumb({ label }: { label: string }) {
   );
 }
 
+/** One object of a laid-out template: where it sits, and what to draw there. */
+interface ThumbBox {
+  key: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** `line`, `shape` or `tombstone` when the object is not text. */
+  kind?: string;
+  stroke?: string;
+  thickness?: number;
+  columns: number;
+  html: string;
+}
+
+/**
+ * Read a template's own objects, the way the canvas does.
+ *
+ * A template laid out with `data-frame="x,y,w,h"` is one object per element -
+ * what the formatter opens is four or five movable frames, not a stack of
+ * blocks. Returns null for the templates that have no such layout, which are
+ * previewed as flowing content instead.
+ */
+function thumbBoxes(content: string): ThumbBox[] | null {
+  if (!content.includes('data-frame=')) return null;
+  const host = document.createElement('div');
+  host.innerHTML = content;
+  const out: ThumbBox[] = [];
+  Array.from(host.children).forEach((node, i) => {
+    const spec = node.getAttribute('data-frame');
+    if (!spec) return;
+    const nums = spec.split(/[\s,]+/).map(Number).filter(Number.isFinite);
+    if (nums.length < 4) return;
+    const [x, y, w, h] = nums;
+    const el = node as HTMLElement;
+    out.push({
+      key: `t${i}-${x}-${y}`,
+      x,
+      y,
+      w,
+      h,
+      kind: el.getAttribute('data-kind') ?? undefined,
+      stroke: el.getAttribute('data-stroke') ?? undefined,
+      thickness: Math.round(Number(el.getAttribute('data-thickness'))) || undefined,
+      columns: Math.max(1, Math.round(Number(el.getAttribute('data-columns'))) || 1),
+      html: el.outerHTML,
+    });
+  });
+  return out.length ? out : null;
+}
+
+/**
+ * The objects of a laid-out template, drawn where the template puts them.
+ *
+ * A preview used to pour every template into one padded column, so a page whose
+ * parts are separate objects - the article's headline, byline, rule and body, or
+ * the poem's five - was shown as a stack that the formatter never opens, with
+ * the body flowing out of the headline instead of starting under the rule.
+ * Drawing the objects at their own coordinates costs nothing and makes the card
+ * the page.
+ */
+function LayoutThumb({ boxes }: { boxes: ThumbBox[] }) {
+  return (
+    <>
+      {boxes.map((b) => {
+        if (b.kind === 'line') {
+          const thickness = b.thickness ?? COLUMN_RULE_WIDTH;
+          // Draw the bar where the editor will: a line frame is clamped to a
+          // 60px minimum (MIN_W / MIN_H) and the bar runs through its middle,
+          // so a template that declared a shorter box still opens with its bar
+          // at the same centre. The bar itself stays the declared thickness.
+          const cx = b.x + Math.max(b.w, MIN_W) / 2;
+          const cy = b.y + Math.max(b.h, MIN_H) / 2;
+          return (
+            <span
+              key={b.key}
+              className="pointer-events-none absolute block rounded-full"
+              style={{
+                left: cx - b.w / 2,
+                top: cy - thickness / 2,
+                width: b.w,
+                height: thickness,
+                background: b.stroke ?? COLUMN_RULE_COLOR,
+              }}
+            />
+          );
+        }
+        if (b.kind === 'tombstone') {
+          return (
+            <span
+              key={b.key}
+              className="pointer-events-none absolute block rounded-[4px] bg-[#1f1f1f]"
+              style={{ left: b.x, top: b.y, width: b.w, height: b.h }}
+            />
+          );
+        }
+        const cols = b.columns > 1 ? b.columns : undefined;
+        // The editor clamps a frame's size to its 60px-wide / 40px-high
+        // minimums; mirror that here so the thumbnail never promises a size
+        // the sheet does not open with (the editorial's 56px icon used to
+        // render at 56 in the preview and 60 on the page).
+        const w = Math.max(b.w, MIN_W);
+        const h = Math.max(b.h, MIN_H);
+        return (
+          <div
+            key={b.key}
+            className="pointer-events-none absolute overflow-hidden"
+            style={{
+              left: b.x,
+              top: b.y,
+              width: w,
+              height: h,
+              padding: FRAME_PAD,
+              columnCount: cols,
+              columnGap: cols ? FRAME_COL_GAP : undefined,
+              columnFill: 'auto',
+            }}
+            dangerouslySetInnerHTML={{ __html: b.html }}
+          />
+        );
+      })}
+    </>
+  );
+}
+
 /** Render document HTML scaled down to fit its container, like a page icon.
     `columns` mirrors a template's text-frame columns so a two-column page
     previews with its gray rule, not as one wide column, and `master` draws the
-    running head and folio that every page opens with but the content HTML
-does not contain. */
+    running head and folio that every page opens with but the content HTML does
+    not contain. */
 function ScaledDoc({
   content,
   faint,
@@ -636,6 +792,9 @@ function ScaledDoc({
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0);
+  // A template that laid itself out is drawn object by object; anything else
+  // (a single text frame, a per-element split) flows in one column as before.
+  const objects = useMemo(() => thumbBoxes(content), [content]);
   const cols = Math.max(1, Math.round(columns ?? 1));
 
   useEffect(() => {
@@ -669,15 +828,49 @@ function ScaledDoc({
           </>
         )}
         <div
-          className={faint ? 'opacity-70' : ''}
-          style={{
-            ...PAGE_PADDING,
-            columnCount: cols,
-            columnGap: cols > 1 ? 28 : undefined,
-            columnRule: cols > 1 ? '1px solid #d8d2ca' : undefined,
-          }}
-          dangerouslySetInnerHTML={{ __html: content }}
-        />
+          className={`relative ${faint ? 'opacity-70' : ''}`}
+          style={objects ? { width: DOC_WIDTH, height: PAGE_HEIGHT } : PAGE_PADDING}
+        >
+          {objects ? (
+            <LayoutThumb boxes={objects} />
+          ) : (
+          <div
+            style={{
+              columnCount: cols,
+              columnGap: cols > 1 ? FRAME_COL_GAP : undefined,
+              // The sheet's fill order: column 1 to the bottom, then column 2.
+              columnFill: 'auto',
+            }}
+            dangerouslySetInnerHTML={{ __html: content }}
+          />
+          )}
+          {/* The rule between columns is drawn rather than left to CSS: a
+              `column-rule` has square ends, and every other line in the app is
+              a rounded bar (see `columnRuleOffsets`). A laid-out template draws
+              its own rules, and its body has its own measure. */}
+          {cols > 1 && !objects && (
+            <div
+              className="pointer-events-none absolute"
+              style={{
+                top: PAGE_INSET.top,
+                bottom: PAGE_INSET.bottom,
+                left: PAGE_INSET.left,
+                right: PAGE_INSET.right,
+              }}
+              aria-hidden="true"
+            >
+              {columnRuleOffsets(cols, PAGE_CONTENT_W, FRAME_COL_GAP, COLUMN_RULE_WIDTH).map(
+                (left, i) => (
+                  <span
+                    key={i}
+                    className="absolute top-0 bottom-0 block rounded-full"
+                    style={{ left, width: COLUMN_RULE_WIDTH, background: COLUMN_RULE_COLOR }}
+                  />
+                ),
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

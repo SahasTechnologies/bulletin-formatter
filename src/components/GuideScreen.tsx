@@ -964,6 +964,12 @@ function StepCard({ step, n }: { step: GuideStep; n: number }) {
       </div>
 
       {step.preview && <StepPreview html={step.preview} />}
+
+      {step.aside && (
+        <p className="mt-3 rounded-lg border border-bb-400/50 bg-[#fef7f0] p-3 text-[12px] leading-relaxed text-[#5f5a53]">
+          <b className="text-[#3c4043]">Note.</b> {step.aside}
+        </p>
+      )}
     </li>
   );
 }

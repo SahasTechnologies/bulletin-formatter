@@ -15,7 +15,22 @@
  */
 import { sanitizeFrameText } from './frameStyle';
 import { tombstoneCorner, tombstoneOffCorner } from './marker';
+import { COLUMN_RULE_MAX_WIDTH } from './textbox';
 import type { TextBox } from './textbox';
+
+/**
+ * A stored column-rule colour, checked rather than trusted.
+ *
+ * The value ends up in an inline style, so a hand-edited `boxes` string must
+ * not be able to put anything it likes there. `none` is not a colour but the
+ * meaningful case of no rule at all, and is kept.
+ */
+const RULE_COLOUR_VALUE = /^(#[0-9a-f]{3,8}|rgba?\([^()]*\)|hsla?\([^()]*\)|[a-z]+)$/i;
+function sanitizeRuleColour(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  if (value === 'none') return 'none';
+  return RULE_COLOUR_VALUE.test(value) ? value : undefined;
+}
 
 /** Smallest frame the user can be left holding, in page pixels. */
 export const MIN_W = 60;
@@ -395,6 +410,14 @@ function buildBoxes(
             columns:
               typeof b.columns === 'number' && b.columns >= 1
                 ? Math.min(4, Math.round(b.columns))
+                : undefined,
+            // The column rule is part of the frame's look, so it has to survive
+            // a reload: the colour, or `none` for a frame whose columns are not
+            // fenced off, and the weight in px.
+            rule: sanitizeRuleColour(b.rule),
+            ruleWidth:
+              typeof b.ruleWidth === 'number'
+                ? Math.max(1, Math.min(COLUMN_RULE_MAX_WIDTH, Math.round(b.ruleWidth)))
                 : undefined,
             ph: typeof b.ph === 'string' ? b.ph : undefined,
             align:

@@ -277,6 +277,36 @@ export async function purgeDoc(id: string): Promise<StoredDocument[]> {
   return remaining.slice(0, MAX);
 }
 
+/**
+ * Delete *every* saved document - the home screen's "Delete all".
+ *
+ * Same clean-up `purgeDoc` does for one document, applied to the whole list:
+ * the recent list and the version histories are cleared, and every picture or
+ * PDF blob in IndexedDB that those documents referred to goes with them. It has
+ * to walk the refs *before* it clears the list, because afterwards there is
+ * nothing left to ask what the documents were holding.
+ *
+ * Clearing the list alone would leave every embedded picture behind in the
+ * media database, so "delete all" would look like a fresh install and weigh
+ * like every issue the formatter ever merged.
+ */
+export async function purgeAllDocs(): Promise<StoredDocument[]> {
+  const docs = loadRecentDocs();
+  const versions = loadVersions();
+
+  const owned = new Set<string>();
+  for (const doc of docs) for (const ref of assetRefsOf(doc.boxes)) owned.add(ref);
+  for (const snapshots of Object.values(versions)) {
+    for (const snapshot of snapshots) for (const ref of assetRefsOf(snapshot.boxes)) owned.add(ref);
+  }
+
+  saveVersions({});
+  saveDocs([]);
+
+  for (const ref of owned) await deleteMedia(ref);
+  return [];
+}
+
 /** Rename a saved document in place (title only; nothing else changes).
     Returns the new list, or the old one when the id is unknown. */
 export function renameDoc(id: string, title: string): StoredDocument[] {

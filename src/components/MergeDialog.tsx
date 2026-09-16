@@ -89,9 +89,21 @@ export default function MergeDialog({
                 you want with the arrows. The cover goes to the front, the end page to the
                 bottom.
               </p>
-              <ul className="divide-y divide-gdoc-border rounded border border-gdoc-border">
+              <ul className="overflow-hidden rounded border border-gdoc-border">
                 {inputs.map((input, i) => (
-                  <li key={`${input.fileName}-${i}`} className="flex items-center gap-2 px-3 py-2">
+                  <li
+                    key={`${input.fileName}-${i}`}
+                    className="relative flex items-center gap-2 px-3 py-2"
+                  >
+                    {/* A rounded bar over a `divide-y` hairline, so the rows
+                        are fenced off the same way every other divider in the
+                        app is drawn. */}
+                    {i > 0 && (
+                      <span
+                        className="divider-bar pointer-events-none absolute inset-x-3 top-0"
+                        aria-hidden="true"
+                      />
+                    )}
                     <span className="w-5 flex-none text-[12px] text-gdoc-muted">{i + 1}</span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[13px] text-[#3c4043]">

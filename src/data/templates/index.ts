@@ -101,15 +101,18 @@ const ISSUE_MASTER = {
     nothing has to be squeezed to fit one sheet. */
 /** Contents pages run to 18pt entries so the list reads from the back of the
     room; the frame's standard is the house body, so retyping the list (the
-    normal way to fill the page in) comes back as body type that still fits. */
-const CONTENTS_TEXT = 'font-size:13pt;line-height:1.45';
+    normal way to fill the page in) comes back as body type that still fits. A
+    long article title still breaks rather than running out of its column. */
+const CONTENTS_TEXT = 'font-size:13pt;line-height:1.45;overflow-wrap:break-word';
 const CONTENTS_SHEETS: TemplateSheet[] = [
   { html: bulletinContentsSheet, columns: 2, text: CONTENTS_TEXT },
 ];
 
 /** House body type: what a continuation sheet writes in, and what its frame
-    standard declares, so retyping a sheet keeps the article's own measure. */
-const ARTICLE_TEXT = 'font-size:13pt;line-height:1.45';
+    standard declares, so retyping a sheet keeps the article's own measure. The
+    standard also carries the long-word rule, which is what makes it survive a
+    wholesale paste (see `breakLongWords`). */
+const ARTICLE_TEXT = 'font-size:13pt;line-height:1.45;overflow-wrap:break-word';
 
 /** The four plain lorem-ipsum continuation sheets a full article opens with. */
 const ARTICLE_SHEETS: TemplateSheet[] = [
@@ -126,9 +129,12 @@ export const TEMPLATES: Template[] = [
   {
     id: 'blank',
     name: 'Blank page',
-    blurb: 'An empty bulletin page with the issue running head and folio',
+    blurb: 'A completely empty sheet - no running head, folio or any other master-page furniture',
     content: blank,
-    master: ISSUE_MASTER,
+    // Deliberately no `master`: a blank page is an insert, and inserts carry no
+    // furniture until a master is applied to them (Format ▸ Apply Master Page).
+    // Seeding the issue master here printed the running head and folio on a
+    // page that is meant to be nothing but paper.
     plus: true,
   },
   // One template per page of the Design Bible, in the order an issue runs:
@@ -167,7 +173,11 @@ export const TEMPLATES: Template[] = [
       'Full article - two-column start page, four lorem continuation sheets and an extras sheet',
     content: bulletinArticle,
     master: ISSUE_MASTER,
-    frame: { columns: 2, text: ARTICLE_TEXT },
+    // Laid out: the headline, the byline, the separating rule and the
+    // two-column body are four separate objects on the sheet, so the writer's
+    // name is never part of the copy the formatter pastes into and the rule is
+    // a line they can restyle or remove on its own.
+    layout: true,
     sheets: ARTICLE_SHEETS,
     tombstone: true,
   },

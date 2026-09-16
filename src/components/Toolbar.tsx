@@ -80,7 +80,7 @@ const MASTER_TITLE =
 const ALL_KEYS = [
   'find', 'undo', 'redo', 'print', 'spell', 'style', 'font', 'size',
   'bold', 'italic', 'underline', 'textColor', 'highlight',
-  'link', 'image', 'alignL', 'alignC', 'alignR', 'alignJ', 'bullet', 'number',
+  'link', 'image', 'alignL', 'alignC', 'alignR', 'alignJ', 'breakWords', 'bullet', 'number',
   'indentDec', 'indentInc', 'lineSpacing', 'master',
 ] as const;
 type ItemKey = (typeof ALL_KEYS)[number];
@@ -102,10 +102,11 @@ const GROUPS: Record<ItemKey, number> = {
   bold: 6, italic: 6, underline: 6, textColor: 6, highlight: 6, // character
   link: 7, image: 7, // insert
   alignL: 8, alignC: 8, alignR: 8, alignJ: 8, // paragraph
-  bullet: 9, number: 9,
-  indentDec: 10, indentInc: 10,
-  lineSpacing: 11,
-  master: 12, // page furniture
+  breakWords: 9, // its own group: a fenced-off typographic setting, not a fourth alignment
+  bullet: 10, number: 10,
+  indentDec: 11, indentInc: 11,
+  lineSpacing: 12,
+  master: 13, // page furniture
 };
 
 const ESSENTIALS = new Set<ItemKey>([
@@ -613,6 +614,30 @@ export default function Toolbar(props: ToolbarProps) {
         return <ToolBtn title="Align right" active={ed.queryState('justifyRight')} onClick={() => ed.exec('justifyRight')}><AlignRight size={18} /></ToolBtn>;
       case 'alignJ':
         return <ToolBtn title="Justify" active={ed.queryState('justifyFull')} onClick={() => ed.exec('justifyFull')}><AlignJustify size={18} /></ToolBtn>;
+      case 'breakWords': {
+        // Breaking long words is a paragraph setting, like alignment above it:
+        // it acts on the paragraphs the selection touches (Ctrl + A for the
+        // whole frame). Select the text, then click.
+        //
+        // No dictionary and no caveat: the canvas cuts a word that is wider
+        // than the column, prints the hyphen and continues on the next line
+        // (see `breakLongWords`). All this button writes is the paragraph's
+        // consent to it.
+        const on = ed.breakLongWordsOn();
+        return (
+          <ToolBtn
+            title={
+              on
+                ? 'Long words are broken with a hyphen - click to leave them whole (select the text first; Ctrl + A takes the whole frame)'
+                : 'Break long words with a hyphen - a word wider than the column is cut and continued on the next line (select the text first; Ctrl + A takes the whole frame)'
+            }
+            active={on}
+            onClick={() => ed.setBreakLongWords(!on)}
+          >
+            <Minus size={18} />
+          </ToolBtn>
+        );
+      }
       case 'bullet':
         return <ToolBtn title="Bulleted list" onClick={() => ed.exec('insertUnorderedList')}><List size={18} /></ToolBtn>;
       case 'number':
@@ -648,22 +673,21 @@ export default function Toolbar(props: ToolbarProps) {
   };
 
   /**
-   * `divider` draws the hairline that fences off a group.
+   * `divider` draws the rounded bar that fences off a group.
    *
-   * It is a left border on the wrapper rather than a separate separator element
-   * for two reasons: the measuring pass then counts the line in `offsetWidth`
-   * (a standalone `<div>` would add width the fit calculation never sees, and
-   * the pill would spill past its rounded edge), and it costs 1px instead of
-   * ~9px. That matters - at 1440px the row is within ~20px of full, so padded
-   * dividers push the last controls into the ⋮ strip. The row's own `gap-1.5`
-   * supplies the space either side of the line.
+   * It is a pseudo-element on the wrapper (`.tool-divider-attached`) rather than
+   * either a separate node or a left border. A standalone `<div>` would add
+   * width the measuring pass never sees, so the pill would spill past its
+   * rounded edge; a border is square-ended, and everything else in the row has
+   * rounded corners. A pseudo-element costs no width at all and can be rounded,
+   * and it sits in the row's own `gap-1.5` so it never touches a control.
    */
   const wrapped = (key: ItemKey, node: React.ReactNode, divider = false) => (
     <div
       key={key}
       data-item={key}
       data-essential={ESSENTIALS.has(key) ? 'true' : undefined}
-      className={`flex-none ${divider ? 'border-l border-bb-300' : ''}`}
+      className={`flex-none ${divider ? 'tool-divider-attached' : ''}`}
     >
       {node}
     </div>

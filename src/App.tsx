@@ -50,6 +50,7 @@ import {
 import {
   loadRecentDocs,
   offloadMediaForSave,
+  purgeAllDocs,
   purgeDoc,
   saveDoc,
   renameDoc,
@@ -892,6 +893,15 @@ function AppShell() {
         danger: true,
       }).then((ok) => {
         if (!ok) return;
+        // Deleting the document that is still open in memory has to drop the
+        // in-memory copy too: it is the one `persistNow` (and the flush on
+        // pagehide/visibilitychange) writes back, so a later save resurrected
+        // the document that had just been deleted - it reappeared at the top
+        // of the home screen with a fresh timestamp.
+        if (activeDocRef.current?.id === id) {
+          activeDocRef.current = null;
+          setActiveDoc(null);
+        }
         // `purgeDoc` also drops the document's snapshots and reclaims the media
         // nothing else uses; `deleteDoc` only removed the entry itself.
         void purgeDoc(id).then((list) => setRecentDocs(list));
@@ -899,6 +909,32 @@ function AppShell() {
     },
     [confirm, recentDocs],
   );
+
+  /**
+   * Delete every saved document, from the home screen's "Delete all".
+   *
+   * The in-memory document is dropped first: it may still be holding an open
+   * bulletin from earlier in the session, and its next save (or the unload
+   * flush) would write that document straight back into the list that was just
+   * emptied - which is exactly how a "deleted" probe document came back once.
+   */
+  const deleteAllRecents = useCallback(() => {
+    if (!recentDocs.length) return;
+    void confirm({
+      title: `Delete all ${recentDocs.length} documents?`,
+      body: 'Every bulletin saved in this browser is removed, together with its version history and any pictures or PDFs nothing else uses. This cannot be undone.',
+      confirmLabel: 'Delete all',
+      danger: true,
+    }).then((ok) => {
+      if (!ok) return;
+      activeDocRef.current = null;
+      setActiveDoc(null);
+      void purgeAllDocs().then((list) => {
+        setRecentDocs(list);
+        toast('All documents deleted.', { kind: 'success' });
+      });
+    });
+  }, [confirm, recentDocs.length, toast]);
 
   /** Rename a document straight from its card on the home screen. */
   const renameRecent = useCallback((id: string, next: string) => {
@@ -1673,6 +1709,7 @@ function AppShell() {
           onOpenTemplate={openTemplate}
           onOpenRecent={openRecent}
           onDeleteRecent={deleteRecent}
+          onDeleteAllRecents={deleteAllRecents}
           onRenameRecent={renameRecent}
           onImportFile={importFile}
           onMergeFiles={(files) => setMergeFiles(files)}

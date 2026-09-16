@@ -443,7 +443,7 @@ export default function PageSidebar({
                 onDuplicatePage(menu.page);
               }}
             />
-            <div className="my-1 h-px bg-gdoc-border" />
+            <div className="divider-bar my-1" />
             <MenuRow
               icon={<Move size={13} />}
               label="Move page…"
@@ -460,7 +460,7 @@ export default function PageSidebar({
                 setDialog({ kind: 'rename', page: menu.page });
               }}
             />
-            <div className="my-1 h-px bg-gdoc-border" />
+            <div className="divider-bar my-1" />
             {masters && masters.length > 0 && (
               <>
                 <MenuRow
@@ -504,7 +504,7 @@ export default function PageSidebar({
                 setSpread((v) => !v);
               }}
             />
-            <div className="my-1 h-px bg-gdoc-border" />
+            <div className="divider-bar my-1" />
             <MenuRow
               icon={<Trash2 size={13} />}
               label="Delete page"

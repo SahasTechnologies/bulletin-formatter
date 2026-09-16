@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { Columns2, Columns3, ImagePlus, PaintBucket, Trash2, Unlink } from 'lucide-react';
+import { Ban, Columns2, Columns3, ImagePlus, PaintBucket, Trash2, Unlink } from 'lucide-react';
 import PageSidebar from './PageSidebar';
 import { useFeedback } from './Feedback';
 import LayersPanel from './LayersPanel';
@@ -21,6 +21,12 @@ import {
   recomposeStory,
   caretOffsetIn,
   setCaretOffset,
+  COLUMN_RULE_COLOR,
+  COLUMN_RULE_MAX_WIDTH,
+  COLUMN_RULE_WIDTH,
+  FRAME_COL_GAP,
+  FRAME_PAD,
+  columnRuleOffsets,
   type TextBox,
 } from '../lib/textbox';
 import {
@@ -28,6 +34,7 @@ import {
   selectionCoversContents,
   stripBorrowedType,
 } from '../lib/frameStyle';
+import { breakLongWords } from '../lib/longWords';
 import { tombstoneCorner, tombstoneOffCorner } from '../lib/marker';
 import {
   buildModel,
@@ -103,9 +110,35 @@ const MASTER_INSET = 48;
 /** Clear space between a band and the master frame it sits outside of. */
 const MASTER_BAND_GAP = 4;
 /** Gutter (px) between columns inside a multi-column text box. */
-const COLUMN_GAP = 28;
-/** Gray of the rule drawn between columns (matches the frame borders). */
-const COLUMN_RULE_COLOR = '#d8d2ca';
+const COLUMN_GAP = FRAME_COL_GAP;
+
+/**
+ * The measure of one column inside a frame, px - the width a line of that
+ * frame's text actually has to live in.
+ *
+ * The same arithmetic as `flowStory`'s capacity model: the frame's inner width
+ * shared between its columns, minus the gutters between them.
+ */
+function columnWidthOf(box: { w: number; columns?: number }): number {
+  const cols = Math.max(1, Math.min(3, Math.round(box.columns ?? 1)));
+  const inner = Math.max(0, box.w - FRAME_PAD * 2);
+  return (inner - (cols - 1) * COLUMN_GAP) / cols;
+}
+
+/** The rule colour a frame asks for, or null when it has asked for none. */
+function ruleColourOf(box: TextBox): string | null {
+  if ((box.columns ?? 1) < 2) return null;
+  if (box.rule === 'none') return null;
+  return box.rule ?? COLUMN_RULE_COLOR;
+}
+
+/** The rule weight a frame asks for, in px. */
+function ruleWidthOf(box: TextBox): number {
+  return Math.max(
+    1,
+    Math.min(COLUMN_RULE_MAX_WIDTH, Math.round(box.ruleWidth ?? COLUMN_RULE_WIDTH)),
+  );
+}
 /** Pixels of movement before a click on a selected box turns into a drag. */
 const DRAG_THRESHOLD = 3;
 /** How many document states the undo stack keeps. */
@@ -314,6 +347,9 @@ interface BoxEntry {
   thickness?: number;
   ph?: string;
   columns?: number;
+  /** Column rule: its colour (`'none'` switches it off) and its weight, px. */
+  rule?: string;
+  ruleWidth?: number;
 }
 export default function DocumentCanvas({
   zoom,
@@ -543,6 +579,11 @@ export default function DocumentCanvas({
         // Keep an explicit 1 so a deliberate single-column frame survives a
         // reload as one frame instead of being re-split per element.
         columns: b.columns ? Math.max(1, b.columns) : undefined,
+        // The column rule is part of the frame, so it has to be written down:
+        // without these two the choice lived only in React state and was
+        // silently gone on the next reload.
+        rule: b.rule,
+        ruleWidth: typeof b.ruleWidth === 'number' ? Math.round(b.ruleWidth) : undefined,
         nextId: b.nextId,
         // The frame's standard outlives the session: a retype after a reload
         // must still adopt it rather than the first block's borrowed type.
@@ -557,6 +598,21 @@ export default function DocumentCanvas({
     );
     if (recordHistory) pushHistory();
   }, [onDocChange, pushHistory]);
+
+  /**
+   * `snapshot` behind a ref.
+   *
+   * The layout pass below rewrites text of its own accord (breaking a word that
+   * no longer fits its column) and that has to reach the saved copy - but
+   * taking `snapshot` as a dependency there would re-create the layout pass
+   * whenever the document callback changed, and everything must not start
+   * depending on the canvas's reflow identity instead. The ref lets it call the
+   * current one without re-running the dependency chain.
+   */
+  const snapshotRef = useRef<(recordHistory?: boolean) => void>(() => {});
+  useEffect(() => {
+    snapshotRef.current = snapshot;
+  }, [snapshot]);
 
   /**
    * The overflow/flow engine.
@@ -627,6 +683,25 @@ export default function DocumentCanvas({
         if (i === chain.length - 1 && result.overflow) overflow.add(b.id);
       });
     }
+
+    /* Long words, before the overflow verdicts below: a word wider than the
+       column is cut, printed with a hyphen, and continued on the next line
+       (see `breakLongWords`). Only paragraphs that asked for it are touched -
+       the pill's break-long-words button is the only thing that asks. Running
+       it first is what keeps a frame from being flagged red for a break it is
+       one pass away from making. */
+    let reworded = false;
+    for (const b of list) {
+      if (b.kind) continue;
+      const el = boxEls.current.get(b.id);
+      if (!el) continue;
+      if (breakLongWords(el, columnWidthOf(b)) > 0) reworded = true;
+    }
+    // The text on the sheet changed, so what the document would save is now
+    // stale. This is not a user edit - no history entry - but it does have to
+    // reach the saved copy, or a printed or exported sheet would break its
+    // words differently from the one on screen.
+    if (reworded) snapshotRef.current(false);
 
     // Standalone boxes: red chrome when their own content clips. Compare
     // against the box's *state* height with a safety tolerance so normal typing
@@ -1145,6 +1220,9 @@ export default function DocumentCanvas({
     thickness?: number;
     ph?: string;
     columns?: number;
+    /** Column rule: its colour (`'none'` switches it off) and its weight. */
+    rule?: string;
+    ruleWidth?: number;
   };
   const updateBox = useCallback(
     (id: string, patch: BoxPatch) => {
@@ -2399,6 +2477,7 @@ function PageThumb({
                   width: b.w,
                   height: Math.max(1, Math.round(b.thickness ?? 2)),
                   background: b.stroke ?? '#3f3f3f',
+                  borderRadius: Math.max(1, Math.round(b.thickness ?? 2)) / 2,
                 }}
               />
             ) : (
@@ -2459,16 +2538,48 @@ function PageThumb({
                 top: b.y,
                 width: b.w,
                 height: b.h,
-                // Mirror the frame's columns so the sidebar thumbnail matches
-                // the sheet, gray column rule included.
-                columnCount: Math.max(1, Math.round(b.columns ?? 1)),
-                columnGap: (b.columns ?? 1) > 1 ? COLUMN_GAP : undefined,
-                columnRule:
-                  (b.columns ?? 1) > 1 ? `1px solid ${COLUMN_RULE_COLOR}` : undefined,
-                columnFill: 'balance',
               }}
-              dangerouslySetInnerHTML={{ __html: contentOf(b) }}
-            />
+            >
+              {/* Columns and gutter exactly as the sheet draws them, so the
+                  thumbnail is a smaller copy of the page rather than a
+                  differently-built one. */}
+              <div
+                className="page-box-content"
+                style={{
+                  columnCount: Math.max(1, Math.round(b.columns ?? 1)),
+                  columnGap: (b.columns ?? 1) > 1 ? COLUMN_GAP : undefined,
+                  // `auto` - fill column 1 to the frame's bottom, then start
+                  // column 2, which is how a newspaper frame fills and what the
+                  // flow engine's capacity model assumes (see `flowStory`).
+                  // `balance` split the same story evenly, so both columns
+                  // stopped short of the frame and the page looked unfinished.
+                  columnFill: 'auto',
+                }}
+                dangerouslySetInnerHTML={{ __html: contentOf(b) }}
+              />
+              {/* The gutter rule, drawn as rounded bars like the live frame's
+                  (a CSS `column-rule` has square ends). */}
+              {ruleColourOf(b) && (
+                <div className="page-box-rules" style={{ inset: FRAME_PAD }} aria-hidden="true">
+                  {columnRuleOffsets(
+                    b.columns ?? 1,
+                    b.w - FRAME_PAD * 2,
+                    COLUMN_GAP,
+                    ruleWidthOf(b),
+                  ).map((left, i) => (
+                    <span
+                      key={i}
+                      style={{
+                        left,
+                        width: ruleWidthOf(b),
+                        background: ruleColourOf(b) ?? undefined,
+                        borderRadius: 9999,
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
           ),
         )}
       {/* The end-of-piece marker, in the same page coordinates the sheet uses,
@@ -2799,7 +2910,17 @@ interface TextBoxViewProps {
   onArmReplace: () => void;
   onGeomChange: (
     id: string,
-    patch: { x?: number; y?: number; w?: number; h?: number; radius?: number; fade?: number; columns?: number },
+    patch: {
+      x?: number;
+      y?: number;
+      w?: number;
+      h?: number;
+      radius?: number;
+      fade?: number;
+      columns?: number;
+      rule?: string;
+      ruleWidth?: number;
+    },
   ) => void;
   onArmPour: (id: string) => void;
   onAcceptPour: (id: string) => void;
@@ -2962,8 +3083,11 @@ function TextBoxView({
   ];
 
   /** Newspaper-style column count (1 = single). A multi-column box fills
-      column 1 first, then column 2, with a gray rule in the gutter. */
+      column 1 first, then column 2, with a rule in the gutter. */
   const cols = Math.max(1, Math.min(3, Math.round(box.columns ?? 1)));
+  /** The gutter rule this frame asks for: its colour (null = none) and weight. */
+  const ruleColour = ruleColourOf(box);
+  const ruleWidth = ruleWidthOf(box);
 
   return (
     <div
@@ -3008,12 +3132,30 @@ function TextBoxView({
         style={{
           columnCount: cols,
           columnGap: cols > 1 ? COLUMN_GAP : undefined,
-          // Newspaper rule: a gray hairline down the middle of a multi-column
-          // box (accent-color of the existing borders).
-          columnRule: cols > 1 ? `1px solid ${COLUMN_RULE_COLOR}` : undefined,
-          columnFill: 'balance',
+          // No CSS `column-rule`: it draws square ends and cannot be rounded,
+          // so the rule is drawn as rounded bars just below instead.
+          //
+          // `auto` fills column 1 to the bottom of the frame and only then
+          // starts column 2 - the newspaper fill, and the one the flow engine
+          // measures against (see `flowStory`'s capacity model). `balance`
+          // shared a short story out evenly, so a part-filled frame left both
+          // columns floating above the bottom edge and looked unfinished.
+          columnFill: 'auto',
         }}
       />
+
+      {/* The newspaper rule between the columns, drawn rather than delegated
+          to CSS so its ends can be rounded (see `columnRuleOffsets`). */}
+      {ruleColour && (
+        <div className="page-box-rules" style={{ inset: FRAME_PAD }} aria-hidden="true">
+          {columnRuleOffsets(cols, box.w - FRAME_PAD * 2, COLUMN_GAP, ruleWidth).map((left, i) => (
+            <span
+              key={i}
+              style={{ left, width: ruleWidth, background: ruleColour, borderRadius: 9999 }}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Red outline whenever text is clipped - even unselected - so the
           overflow state is visible at a glance (Publisher-style). */}
@@ -3038,6 +3180,55 @@ function TextBoxView({
               e.stopPropagation();
             }}
           >
+            {/* The rule lives in a gutter, so it is only offered on a frame
+                that has one: a single-column frame has nowhere to draw it.
+                Colour and weight are the same two fields a line box offers -
+                a colour picker and a weight box - so "edit the line" means the
+                same thing wherever the line is. */}
+            {cols > 1 && (
+              <>
+                <label className="img-style-field" title="Column rule colour">
+                  <span>Rule</span>
+                  <input
+                    type="color"
+                    value={ruleColour ?? COLUMN_RULE_COLOR}
+                    onChange={(e) => onGeomChange(box.id, { rule: e.target.value })}
+                  />
+                </label>
+                <label className="img-style-field" title="Rule weight (px)">
+                  <span>Weight</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={COLUMN_RULE_MAX_WIDTH}
+                    step={1}
+                    value={ruleWidth}
+                    onChange={(e) =>
+                      onGeomChange(box.id, {
+                        ruleWidth: Math.max(
+                          1,
+                          Math.min(
+                            COLUMN_RULE_MAX_WIDTH,
+                            Math.round(Number(e.target.value) || 1),
+                          ),
+                        ),
+                      })
+                    }
+                  />
+                </label>
+                {/* Only offered while a rule is drawn: there has to be a way
+                    back to two plain columns. */}
+                {ruleColour && (
+                  <button
+                    title="No rule between the columns"
+                    onClick={() => onGeomChange(box.id, { rule: 'none' })}
+                  >
+                    <Ban size={13} />
+                  </button>
+                )}
+                <span className="tool-divider" aria-hidden="true" />
+              </>
+            )}
             <button
               title="Single column"
               onClick={() => onGeomChange(box.id, { columns: 1 })}
@@ -3059,6 +3250,7 @@ function TextBoxView({
             >
               <Columns3 size={13} />
             </button>
+            <span className="tool-divider" aria-hidden="true" />
             {box.nextId && (
               <button
                 title="Break link to next box (its text stays put)"
@@ -3500,6 +3692,9 @@ function ShapeBoxView({
   const stroke = box.stroke ?? '#3f3f3f';
   const thickness = Math.max(1, Math.min(200, Math.round(box.thickness ?? 2)));
   const radius = Math.max(0, Math.min(2000, Math.round(box.radius ?? 0)));
+  /** A rule is a capsule: fully rounded ends, so a heavy one reads as a stroke
+      rather than as a rectangle that happened to be thin. */
+  const lineRadius = thickness / 2;
 
   return (
     <div
@@ -3519,7 +3714,10 @@ function ShapeBoxView({
       data-box-id={box.id}
     >
       {isLine ? (
-        <div className="page-box-line" style={{ height: thickness, background: stroke }} />
+        <div
+          className="page-box-line"
+          style={{ height: thickness, background: stroke, borderRadius: lineRadius }}
+        />
       ) : (
         <div className="page-box-fill" style={{ background: fill, borderRadius: radius }} />
       )}

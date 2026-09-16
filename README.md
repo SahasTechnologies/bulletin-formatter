@@ -112,6 +112,25 @@ its placeholder hint ("Click to add a header", "Type here…").
 The blue selection chrome belongs to the editor, never to the page: set
 **View ▸ Viewing** to see the sheet exactly as it prints.
 
+A two-column frame fills **column one to the bottom, then column two**
+(`column-fill: auto`) - the newspaper order, and the one the flow engine's
+capacity model measures against. `balance`, which shares a short story out
+between the columns, left both of them floating above the frame's bottom edge.
+
+A selected frame's own toolbar sits above it. A text frame offers its column
+count (1 / 2 / 3) and, once it has more than one column, the gutter **rule**: a
+colour picker and a weight box, exactly as a line box has them, plus a
+"no rule" button for two plain columns. The rule is drawn as a rounded bar
+rather than a CSS `column-rule`, whose ends are always square, and the colour
+and weight are saved with the frame.
+
+One grey, one weight, everywhere. `COLUMN_RULE_COLOR` (#d9d3c9) and
+`COLUMN_RULE_WIDTH` (2px) in `src/lib/textbox.ts` are the house rule, and they
+are the same for the gutter between two columns, the line under a byline (its
+own object on the article and poem start pages), the rule under a contents
+heading and the merged issue's. The article's byline rule, its column rule and
+the contents rule are therefore one line, not three lines that nearly match.
+
 ### Threading text (linked frames)
 
 A chain of linked frames shares **one story**. When the last frame of a chain
@@ -170,9 +189,16 @@ none of which the native `contentEditable` stack could ever restore.
 
 Notices appear as toasts in the bottom-left corner (errors linger twice as long
 as successes) and anything destructive asks in the app's own dialog -
-*Move “Article” to trash?*, *Delete page 4?*, *Delete master page A?*. Nothing in
-the app uses a native `alert`/`confirm`, which would freeze the tab and cannot be
-styled or inspected.
+*Move “Article” to trash?*, *Delete page 4?*, *Delete master page A?*, *Delete
+all 16 documents?*. Nothing in the app uses a native `alert`/`confirm`, which
+would freeze the tab and cannot be styled or inspected.
+
+Deleting one document is done from its card on the home screen. **Delete all**
+sits at the right of the *Recent documents* heading (only while there is
+something to delete) and asks once, in the same dialog; `purgeAllDocs` then
+clears the list, the version histories and every picture or PDF blob those
+documents referred to, so it really does leave the browser as empty as a fresh
+install.
 
 ---
 
@@ -298,6 +324,7 @@ Notes:
 | `Ctrl+K` | Insert a link |
 | `Ctrl+A` | Select all (contents of the frame you are in; the whole sheet when the frame is selected) |
 | `Ctrl+Shift+L` / `E` / `R` / `J` | Align left / centre / right / justify |
+| — (pill: the break-long-words button) | Cut a word wider than the column with a hyphen, and continue it on the next line, for the paragraphs the selection touches |
 | `Ctrl+\` | Clear formatting |
 | `Ctrl+]` / `Ctrl+[` | Bring forward / send backward |
 | `Ctrl+Shift+]` / `Ctrl+Shift+[` | Bring to front / send to back |
@@ -335,6 +362,8 @@ Consequences worth knowing:
   `File ▸ Download ▸ Bulletin` is the backup.
 - Recent documents are capped at 16; older ones drop off the list (their
   version snapshots stay until purged).
+- Deleting the document that is still open in memory drops the in-memory copy
+  with it, so the next save cannot write it back after it was deleted.
 - **File ▸ Version history** lists the snapshots of the open document and can
   restore one.
 - **File ▸ Details** shows where the file came from and what it contains.
@@ -392,7 +421,7 @@ of the Home-screen picker is one of them:
 | Title page | One full-bleed image frame - drop the cover artwork in |
 | Editorial | Title, the news icon as its own movable image box, and the letter in a text box |
 | Page of contents | A title, a separate movable rule, and one two-column list box |
-| Article | Start page, four two-column continuation sheets, one extras sheet |
+| Article | Headline, byline, rule and two-column body as four separate objects on the start page, four two-column continuation sheets, one extras sheet |
 | Puzzle | A single full-page puzzle frame |
 | Poem | One column, ending in the end-of-piece marker |
 | Graphic | Title, byline, click-to-add art frame (never cropped) and credit |
@@ -405,10 +434,28 @@ text box, a columned text box (`data-columns`), an orange rectangle
 (`data-kind="line"`, `data-stroke`, `data-thickness`). A frame can also declare
 its **standard text type** with `data-text="font-size:13pt;line-height:1.45"` -
 what plain text in it falls back to, and what a wholesale retype (Ctrl+A then
-type) adopts - and the alignment its text falls back to with `data-align`.
+type) adopts - and the alignment its text falls back to with `data-align`. A
+standard may also carry `overflow-wrap:break-word`, the one layout rule worth
+putting there: it is what keeps a pasted article breaking its long words (see
+*Long words* below).
 
 That markup both paints the Home-screen thumbnail and produces the live,
-draggable frames, so a template cannot drift out of step with its thumbnail.
+draggable frames, so a template cannot drift out of step with its thumbnail: the
+thumbnail lays the `data-frame` objects out at their own coordinates, exactly as
+the canvas does.
+
+### Long words
+
+A word wider than its column is cut with a hyphen and continued on the next
+line. That is `src/lib/longWords.ts`: the canvas measures each word against the
+frame's column (a Range over the text, one client rect per line box) and puts a
+**soft hyphen** (U+00AD) at the furthest position that still fits, which is a
+break opportunity every engine honours without a dictionary. Paragraphs consent
+to it with `overflow-wrap: break-word` - the pill's break-long-words button
+writes it, and body frames declare it in their standard - and the pass runs
+before the overflow verdicts on every layout change, so a word that has just
+been broken is not reported as clipping. Taking the setting off (or widening the
+frame) strips the soft hyphens again: every pass starts from clean text.
 
 `src/data/designGuide.ts` is **Design Bible 2.0 as data**: nine page entries with
 their typographic rules (role, font, size, colour), a numbered walkthrough for
@@ -561,6 +608,7 @@ src/
     merge.ts               Merging parts into an issue + the Page of Contents
     frameStyle.ts          A frame's standard type; sanitising pasted/borrowed type
     paragraphStyles.ts*    Named house paragraph styles
+    longWords.ts           Cutting a word wider than its column, with a hyphen
     marker.ts              The end-of-piece marker's geometry and corner rule
     editor.ts              contentEditable command layer (exec, styles, tracking)
     router.ts              Tiny history router ("/" and "/guide")
@@ -687,3 +735,17 @@ preloaded on hover).
   the PDF separately, or take a screenshot and place it as an image.
 - **Word count and spellcheck** are the browser's; there is no translation
   service, because that would need a paid API or a sign-up.
+- **Breaking a long word needs no dictionary here.** The pill's
+  break-long-words button writes `overflow-wrap: break-word` on the paragraphs
+  the selection touches (body frames declare it in their standard, so it
+  survives a wholesale paste), and the canvas then cuts any word wider than the
+  column with a real hyphen and continues it on the next line - see
+  `src/lib/longWords.ts`. It does *not* use the browser's linguistic
+  hyphenation (`hyphens: auto`), which needs a dictionary the engine may not
+  ship; a soft hyphen is a break opportunity every engine honours. The breaks
+  are re-decided on every layout pass, so widening a frame or turning the
+  setting off heals the text back.
+- **The words break at the furthest character that fits, not at syllables.**
+  There is no hyphenation dictionary in the bundle, so `extra&#8209;ordinary`
+  cannot break `extra-` at the syllable - it breaks where the measure runs out,
+  which is what "cut off with a hyphen" means in practice.

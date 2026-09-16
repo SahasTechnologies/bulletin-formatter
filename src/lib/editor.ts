@@ -538,6 +538,50 @@ export function setLineHeight(value: number | string): void {
   notifyInput();
 }
 
+/**
+ * Breaking words that are too long for the column (the pill's word-break
+ * button), for the paragraphs the caret is in.
+ *
+ * This is *not* the browser's linguistic hyphenation. Publisher hyphenates by a
+ * dictionary, and so does `hyphens: auto` - which means an engine that ships no
+ * dictionary silently does nothing, and this app's own preview shell is one of
+ * them. What a formatter needs from the setting is narrower: a word wider than
+ * the column is cut, a hyphen is printed, and the rest continues on the next
+ * line. That is done without a dictionary - a soft hyphen is a manual break
+ * opportunity every engine honours - and it is applied by the canvas, which has
+ * the frame's measure: `overflow-wrap: break-word` is the paragraph's *consent*
+ * to it, and the canvas puts the soft hyphens where the line actually ends (see
+ * `breakLongWords` in src/lib/longWords.ts).
+ *
+ * The declaration is the whole setting, and it lives on the paragraph like
+ * alignment does, so it survives saving, printing and widening the frame. A
+ * selection affects every paragraph it touches; a bare caret affects the
+ * paragraph under it.
+ *
+ * Turning it off writes `normal` rather than removing the declaration: a body
+ * frame may carry the house rule in its standard (`data-text`), and a removed
+ * declaration would simply inherit that rule back. An explicit `normal` on the
+ * paragraph is the one thing that outranks the frame, and it is what the button
+ * reads to show its state.
+ */
+export function setBreakLongWords(on: boolean): void {
+  ensureSelection();
+  const blocks = blocksInSelection();
+  const target = blocks.length ? blocks : getCurrentBlock() ? [getCurrentBlock()!] : [];
+  for (const b of target) b.style.setProperty('overflow-wrap', on ? 'break-word' : 'normal');
+  if (!target.length) applyInlineStyle('overflow-wrap', on ? 'break-word' : 'normal');
+  captureSelection();
+  notifyInput();
+}
+
+/** Whether the text at the caret breaks long words (the pill button's state). */
+export function breakLongWordsOn(): boolean {
+  // `getPropertyValue` wants the CSS name, not the JS one: 'overflowWrap' comes
+  // back empty and the button would never light up.
+  const value = (currentStyle('overflow-wrap') || '').toLowerCase();
+  return value === 'break-word' || value === 'anywhere';
+}
+
 /** Paragraph style: 'p' | 'h1' ... 'h6'. */
 export function formatBlock(tag: string): void {
   exec('formatBlock', `<${tag}>`);

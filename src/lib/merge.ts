@@ -8,6 +8,7 @@
  */
 import { splitIntoBoxes } from './frames';
 import { parseBulletin, type BulletinDoc } from './format';
+import { COLUMN_RULE_COLOR, COLUMN_RULE_WIDTH } from './textbox';
 
 /** A4 portrait - the page every bulletin is laid out for. */
 const PAGE = { width: 794, height: 1123 };
@@ -182,7 +183,9 @@ function contentsSheetHtml(entries: MergeEntry[], continued: boolean): string {
   const sub = continued
     ? `\n<p style="margin:0;padding:0;text-align:center;font-family:'Franklin Gothic Medium','Libre Franklin',Arial,sans-serif;font-size:18pt;line-height:1.25;color:#808080;column-span:all;">continued</p>`
     : '';
-  return `${CONTENTS_HEADING}${sub}\n<hr style="margin:${continued ? '6px' : '0'} 0 0;border:0;border-top:1px solid #d9d3c9;column-span:all;" />\n${rows}`;
+  // The rule under the contents heading is the same line as the one between the
+  // columns below it (house grey, house weight - see COLUMN_RULE_COLOR).
+  return `${CONTENTS_HEADING}${sub}\n<hr style="margin:${continued ? '6px' : '0'} 0 0;border:0;border-top:${COLUMN_RULE_WIDTH}px solid ${COLUMN_RULE_COLOR};column-span:all;" />\n${rows}`;
 }
 
 /** The two-column Page of Contents in the house style - one sheet, or two when

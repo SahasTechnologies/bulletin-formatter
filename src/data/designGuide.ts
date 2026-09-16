@@ -39,6 +39,8 @@ export interface GuideStep {
   preview?: string;
   /** The toolbar / menu path that does the work for this step. */
   click?: string;
+  /** A quieter note under the step - the "why", or the thing that goes wrong. */
+  aside?: string;
 }
 
 export interface GuidePage {
@@ -174,7 +176,13 @@ export const GUIDE_PAGES: GuidePage[] = [
     rules: [
       { role: 'Title', font: 'Franklin Gothic Heavy', size: '48pt', colour: '#3f3f3f', note: '“Editorial”, centred' },
       { role: 'Icon', font: '-', size: '22px', note: 'News icon, centred between the title rules' },
-      { role: 'Body', font: 'Roboto Condensed', size: '13pt', colour: '#262626', note: 'Justified, one text box for all paragraphs' },
+      {
+        role: 'Body',
+        font: 'Roboto Condensed',
+        size: '13pt',
+        colour: '#262626',
+        note: 'Left-aligned, one text box for all paragraphs. Justified is fine too - turn the pill\u2019s break-long-words button on when you do',
+      },
       { role: 'Sign-off', font: 'Roboto Condensed', size: '13pt', colour: '#262626', note: 'Name, then “(Editor-in-Chief)”' },
       { role: 'Tombstone', font: '-', size: '12px', note: 'Black square in the last page\'s corner - on by default' },
     ],
@@ -238,7 +246,7 @@ export const GUIDE_PAGES: GuidePage[] = [
         title: 'Leave the contents until the very end',
         body: 'The page numbers are the last thing you know. Finish every article, puzzle and poem first, then come back and fill this page in.',
         click: 'Format ▸ Columns ▸ Two columns',
-        preview: `<div style="column-count:2;column-gap:28px;column-rule:1px solid #d8d2ca;padding:4px 0;">
+        preview: `<div style="column-count:2;column-gap:28px;column-rule:2px solid #d9d3c9;padding:4px 0;">
   <p style="margin:0;padding:10px 0;text-align:center;font-family:${FG};font-size:18pt;line-height:1.25;color:#3f3f3f;break-inside:avoid;"><b>5 - Puzzle</b><br /><span style="font-family:'Franklin Gothic Medium','Libre Franklin',Arial,sans-serif;color:#262626;">Monster Hunter</span></p>
   <p style="margin:0;padding:10px 0;text-align:center;font-family:${FG};font-size:18pt;line-height:1.25;color:#3f3f3f;break-inside:avoid;"><b>7 - Article</b><br /><span style="font-family:'Franklin Gothic Medium','Libre Franklin',Arial,sans-serif;color:#262626;">The Monster in the Shadow</span></p>
 </div>`,
@@ -264,17 +272,17 @@ export const GUIDE_PAGES: GuidePage[] = [
     name: 'Article',
     section: 'Articles',
     summary:
-      'The full article opens as six sheets: the start page, four two-column continuation sheets, then a spare extras sheet. Title, byline, a gray rule across the page and the body in two columns with a drop cap; the extra sheet holds pull-quotes and Aparajita credits to drag in - or delete it.',
+      'The full article opens as six sheets: the start page, four two-column continuation sheets, then a spare extras sheet. The start page is four separate objects - the headline, the byline, the rule under them and the two-column body - so the name is never part of the copy you paste into; the extra sheet holds pull-quotes and Aparajita credits to drag in, or delete it.',
     rules: [
       { role: 'Title', font: 'Franklin Gothic Heavy', size: '48pt', colour: '#3f3f3f', note: 'Reduce a little if it will not fit one line' },
       { role: 'Byline', font: 'Arial', size: '18pt', colour: '#808080', note: 'Directly beneath the title' },
       { role: 'Precursory note', font: 'Times New Roman', size: '13pt', note: 'Italic - trigger or language warnings go here' },
-      { role: 'Separating rule', font: '-', size: '1px', colour: '#d9d3c9', note: 'Gray line between the author and the start of the article' },
+      { role: 'Separating rule', font: '-', size: '2px', colour: '#d9d3c9', note: 'Its own object on the sheet, under the writer\u2019s name - the same line as the column rule below it' },
       { role: 'Body', font: 'Roboto Condensed', size: '13pt', colour: '#262626', note: 'Two columns, drop cap on the first letter' },
       { role: 'Continuation sheet', font: 'Roboto Condensed', size: '13pt', colour: '#262626', note: 'Two columns of body copy, no headline' },
       { role: 'Pull-quote', font: 'Corbel', size: '24pt', colour: '#3f3f3f', note: 'Italic, with speech marks' },
       { role: 'Artwork credit', font: 'Aparajita', size: '18pt', colour: '#999999', note: 'Italic - on the extras sheet' },
-      { role: 'Column rule', font: '-', size: '1px', colour: '#d9d3c9', note: 'Gray line straight down the middle of every two-column frame' },
+      { role: 'Column rule', font: '-', size: '2px', colour: '#d9d3c9', note: 'Gray line straight down the middle of every two-column frame - the same grey and weight as every other rule on the page' },
       { role: 'Tombstone', font: '-', size: '12px', note: 'Black square in the last sheet\'s corner - on by default' },
     ],
     templateId: 'bulletin-article',
@@ -283,19 +291,20 @@ export const GUIDE_PAGES: GuidePage[] = [
     steps: [
       {
         title: 'Write the title and the byline',
-        body: 'Set the headline in Franklin Gothic Heavy, centred, then put the writer underneath it in Arial 18pt grey. A trigger or language warning, if the piece needs one, goes on the line below the byline in Times New Roman italics.',
+        body: 'The headline, the writer’s name and the rule beneath them are three separate objects on the sheet - click one to edit it, drag it to move it, and never type the name into the body frame. The headline is Franklin Gothic Heavy 48pt centred, the name Arial 18pt grey, and the rule stays exactly where it is unless you mean to move it. A trigger or language warning, if the piece needs one, is a text box of its own under the byline in Times New Roman italics.',
         click: 'Toolbar ▸ style / font / size',
         preview: `<p style="margin:0;padding:4px 0;text-align:center;font-family:${FG};font-size:48pt;line-height:1.05;color:#3f3f3f;${MARK}">[Article Headline]</p>
 <p style="margin:0;text-align:center;font-family:${BYLINE};font-size:18pt;line-height:1.3;color:#808080;${MARK}">By [Writer’s name]</p>
-<hr style="margin:12px 0 0;border:0;border-top:1px solid #d9d3c9;" />`,
+<hr style="margin:12px 0 0;border:0;border-top:2px solid #d9d3c9;" />`,
       },
       {
         title: 'Paste the article into the two-column body',
-        body: 'The gray rule separates the author from the first line of the piece. Paste the copy below it and let it flow through both columns - the rule down the middle of the frame appears on its own. Keep the drop cap on the first letter.',
-        click: 'Format ▸ Columns ▸ Two columns',
-        preview: `<div style="column-count:2;column-gap:28px;column-rule:1px solid #d8d2ca;${MARK}padding:6px 0;">
-  <p style="margin:0;text-align:justify;font-family:${BODY};font-size:13pt;line-height:1.45;color:#262626;"><span style="float:left;font-family:${FG};font-size:44pt;line-height:0.82;padding:4px 6px 0 0;">L</span>orem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
-  <p style="margin:10px 0 0;text-align:justify;font-family:${BODY};font-size:13pt;line-height:1.45;color:#262626;">Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis.</p>
+        body: 'The gray rule separates the author from the first line of the piece. Paste the copy below it and let it flow through both columns - the rule down the middle of the frame appears on its own. Text fills the first column to the bottom of the frame and only then starts the second, so a full column one means the paste worked. Keep the drop cap on the first letter.',
+        click: 'Click the body frame ▸ Ctrl + V',
+        aside: 'Body type is left-aligned (ragged right). If you would rather have it justified, select the text, press the pill\u2019s break-long-words button, and then justify it - in a narrow column an unbroken word pushes the type out of the frame.',
+        preview: `<div style="column-count:2;column-gap:28px;column-rule:2px solid #d9d3c9;${MARK}padding:6px 0;">
+  <p style="margin:0;text-align:left;font-family:${BODY};font-size:13pt;line-height:1.45;color:#262626;"><span style="float:left;font-family:${FG};font-size:44pt;line-height:0.82;padding:4px 6px 0 0;">L</span>orem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+  <p style="margin:10px 0 0;text-align:left;font-family:${BODY};font-size:13pt;line-height:1.45;color:#262626;">Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis.</p>
 </div>`,
       },
       {
@@ -347,7 +356,7 @@ export const GUIDE_PAGES: GuidePage[] = [
         body: 'Same schema as every other piece: the title centred in Franklin Gothic Heavy, the poet’s name underneath in Arial 18pt grey, then the gray rule across the page.',
         preview: `<p style="margin:0;padding:6px 0;text-align:center;font-family:${FG};font-size:48pt;line-height:1.05;color:#3f3f3f;">[Poem Title]</p>
 <p style="margin:0;text-align:center;font-family:${BYLINE};font-size:18pt;line-height:1.3;color:#808080;">By [Poet’s name]</p>
-<hr style="margin:12px 0 0;border:0;border-top:1px solid #d9d3c9;" />`,
+<hr style="margin:12px 0 0;border:0;border-top:2px solid #d9d3c9;" />`,
       },
       {
         title: 'Keep it in one column and keep the line breaks',

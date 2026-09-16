@@ -1110,6 +1110,70 @@ body {
   }
 }
 
+/* ---- Group dividers ------------------------------------------------------
+   Every divider in the app is a rounded bar rather than a hairline: a 1px
+   square-ended line reads as a seam, and the controls beside it are already
+   rounded. Three forms, because they are needed in three situations:
+
+    - `.tool-divider` is a real element, for flex rows that want one between
+      children (the frame toolbar);
+    - `.tool-divider-attached` draws the same bar as a pseudo-element on a
+      wrapper, for the top toolbar, whose fit calculation counts real widths -
+      both a standalone element and a left border would add width there, and
+      the row is close enough to full that the extra pixels push the last
+      controls into the ⋮ strip;
+    - `.divider-bar` is a horizontal bar for stacked rows (menu separators, the
+      pages pane, the merge list) - a `border-t`/`divide-y` hairline has square
+      ends and cannot be rounded. */
+.tool-divider {
+  flex: none;
+  align-self: center;
+  width: 2px;
+  height: 16px;
+  margin: 0 2px;
+  border-radius: 9999px;
+  background: #ded6cb;
+}
+
+.tool-divider-attached {
+  position: relative;
+}
+.tool-divider-attached::before {
+  content: '';
+  position: absolute;
+  /* The row's own `gap-1.5` (6px) is the space either side of the line, so the
+     bar is centred in it rather than drawn over the control it fences off. */
+  left: -3px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 16px;
+  border-radius: 9999px;
+  background: #ded6cb;
+}
+
+.divider-bar {
+  height: 2px;
+  flex: none;
+  border-radius: 9999px;
+  background: #ded6cb;
+}
+
+/* ---- The column rule, and its control -----------------------------------
+   The rule itself is drawn (`.page-box-rules`) so its ends can be rounded - a
+   CSS `column-rule` has square ends and no radius to set. */
+.page-box-rules {
+  position: absolute;
+  pointer-events: none;
+  z-index: 1;
+}
+.page-box-rules span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: block;
+}
+
 /* ---- Confetti: the guide's "you are finished" shower ---------------------
    One keyframe rule drives every piece; the per-piece numbers (delay,
    duration, drift, spin) come from inline styles set in Confetti.tsx. */

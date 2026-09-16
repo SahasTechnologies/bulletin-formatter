@@ -463,7 +463,8 @@ export default function MenuBar({
   const renderItems = (items: MenuItem[], menu: string, depth: number, keyPrefix: string) => (
     <>
       {items.map((item, i) => {
-        if (item === 'sep') return <div key={`sep-${keyPrefix}-${i}`} className="my-1 border-t border-gdoc-border" />;
+        // A rounded bar, not a `border-t` hairline - see `.divider-bar`.
+        if (item === 'sep') return <div key={`sep-${keyPrefix}-${i}`} className="divider-bar my-1" />;
 
         if ('sub' in item && 'label' in item) {
           const key = `${keyPrefix}/${item.label}`;

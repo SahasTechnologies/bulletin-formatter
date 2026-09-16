@@ -38,12 +38,19 @@ const ALLOWED_PROPS = new Set([
   'letter-spacing',
   'text-align',
   'color',
+  // Not type, but the one *layout* rule a body frame needs to state: a word
+  // wider than the column is cut with a hyphen rather than spilling out of the
+  // frame. Declaring it here is what makes it survive a wholesale paste - the
+  // replacement text carries no styles of its own, so a rule that lived only on
+  // the replaced blocks would be lost with them.
+  'overflow-wrap',
 ]);
 
 /** Values that carry a resource or an expression are never a type declaration. */
 const UNSAFE_VALUE = /url\s*\(|expression\s*\(|javascript:|[<>]/i;
 const COLOR_VALUE = /^(#[0-9a-f]{3,8}|rgba?\([^()]*\)|hsla?\([^()]*\)|[a-z]+)$/i;
 const ALIGN_VALUE = /^(left|right|center|justify|start|end)$/i;
+const WRAP_VALUE = /^(normal|break-word|anywhere)$/i;
 
 /** Parse a declaration list (``font-size:13pt;line-height:1.45``) into the
     properties that may be trusted. Unknown or unsafe declarations are dropped. */
@@ -58,6 +65,7 @@ export function parseFrameText(raw: string | null | undefined): Record<string, s
     if (!prop || !value || !ALLOWED_PROPS.has(prop) || UNSAFE_VALUE.test(value)) continue;
     if (prop === 'color' && !COLOR_VALUE.test(value)) continue;
     if (prop === 'text-align' && !ALIGN_VALUE.test(value)) continue;
+    if (prop === 'overflow-wrap' && !WRAP_VALUE.test(value)) continue;
     out[prop] = value;
   }
   return out;
