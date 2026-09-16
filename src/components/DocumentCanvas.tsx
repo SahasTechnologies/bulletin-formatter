@@ -35,6 +35,7 @@ import {
   newBoxId,
   normHtml,
   tombstoneBox,
+  CONTENT_INSET,
   MIN_H,
   MIN_W,
   SPLIT_GAP,
@@ -818,10 +819,18 @@ export default function DocumentCanvas({
     const h = 150;
     // Drop it below whatever is already on the page, cascading right a little
     // each time so consecutive inserts do not stack exactly. No margins - the
-    // box may sit anywhere on the sheet.
+    // box may sit anywhere on the sheet - but the first one starts in the house
+    // content column rather than hard against the paper's trim edge, where the
+    // frame's own padding would leave the text half off the sheet.
     const lowest = onPage.reduce((mx, b) => Math.max(mx, b.y + b.h), 0);
-    const x = Math.min((n % 3) * 26, Math.max(0, page.width - w));
-    const y = Math.min(Math.max(0, lowest + SPLIT_GAP), Math.max(0, page.height - h));
+    const x = Math.min(
+      CONTENT_INSET.x + (n % 3) * 26,
+      Math.max(0, page.width - w),
+    );
+    const y = Math.min(
+      Math.max(CONTENT_INSET.y, lowest + SPLIT_GAP),
+      Math.max(0, page.height - h),
+    );
     const box: TextBox = { id: newBoxId(), pageIndex: targetPage, x, y, w, h, html: '', nextId: null, kind: undefined, src: undefined };
     applyBoxes([...boxesRef.current, box]);
     setSelId(box.id);

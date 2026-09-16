@@ -20,6 +20,15 @@ import type { TextBox } from './textbox';
 /** Smallest frame the user can be left holding, in page pixels. */
 export const MIN_W = 60;
 export const MIN_H = 40;
+/**
+ * The house content column: where the bulletin's own type starts on a sheet.
+ *
+ * There are no margins here - a frame may sit anywhere - but nothing is ever
+ * placed on the trim edge by design: every template and every merged issue
+ * starts its type this far in, so a frame the user adds by hand starts here too
+ * instead of half off the paper.
+ */
+export const CONTENT_INSET = { x: 96, y: 80 };
 /** Vertical gap between stacked element boxes in a migrated document. */
 export const SPLIT_GAP = 24;
 /** 1x1 transparent GIF - the invisible backing picture of a placeholder box

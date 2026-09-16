@@ -1,25 +1,23 @@
 /**
- * Imported PDFs rasterization and storage.
+ * Imported-PDF storage.
  *
- * Imported PDFs are rasterized to high-resolution images at import time
- * using pdfjs-dist. This guarantees that:
- *  1. Printing (@media print / window.print()) prints the imported pages
- *     faithfully without the blank sheets or clipping common to browser iframes.
- *  2. Sidebar thumbnails scale down crisply and accurately.
- *  3. The rendered page images are stored as binary Blobs in IndexedDB (mediaStore),
- *     leaving localStorage unburdened so saving never hits the 5MB quota.
+ * A PDF placed into an issue keeps its original bytes and is shown through the
+ * browser's own PDF viewer (an `<iframe>` over a blob URL, opened at the right
+ * sheet with `#page=N`). That is deliberate: the pages stay *vector*, so text
+ * and graphics inside an imported PDF remain selectable on screen and come out
+ * as real text when the issue is printed.
+ *
+ * The alternative - rasterising each page to an image with pdfjs-dist at import
+ * time - makes printing foolproof but throws away selectability and stores a
+ * large PNG per page. It was rejected for that reason; the code for it lived
+ * here until it was removed as unused. Only the *raw* PDF is stored, once, as a
+ * blob in IndexedDB (mediaStore), so localStorage never carries the file and a
+ * twelve-page import costs one blob rather than twelve images.
  */
 
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import {
-  saveMediaBlob,
-  getMediaBlob,
-  resolveMediaUrl,
-  newAssetId,
-  isAssetRef,
-  dataUrlToBlob,
-} from './mediaStore';
+import { saveMediaBlob, dataUrlToBlob } from './mediaStore';
 
 // Point pdfjs to the bundled worker
 try {
@@ -36,98 +34,29 @@ export function newPdfId(): string {
   return `pdf${Date.now().toString(36)}${seq.toString(36)}`;
 }
 
-/** The `src` a PDF page frame carries. */
+/**
+ * The `src` a PDF page frame carries.
+ *
+ * This doubles as the IndexedDB key the file's blob is stored under, which is
+ * what makes an imported PDF survive a reload: the media store resolves the
+ * `pdf:` reference straight back to the stored file.
+ */
 export function pdfSrc(id: string): string {
   return `pdf:${id}`;
 }
 
-/** The id inside a `pdf:` src, or null when this is an ordinary URL. */
-export function pdfIdOf(src: string | undefined | null): string | null {
-  if (!src || !src.startsWith('pdf:')) return null;
-  return src.slice('pdf:'.length) || null;
-}
-
-export interface RasterizedPage {
-  pageNumber: number;
-  assetId: string;
-  blob: Blob;
-  objectUrl: string;
-  width: number;
-  height: number;
-}
-
 /**
- * Rasterize each page of a PDF document to sharp PNG blobs and persist them to IndexedDB.
- * Uses scale: 2 for print-ready 192/200 DPI clarity.
- */
-export async function rasterizePdfPages(
-  data: ArrayBuffer,
-  pdfId = newPdfId(),
-): Promise<{
-  pdfId: string;
-  pageCount: number;
-  pages: RasterizedPage[];
-}> {
-  const bytes = new Uint8Array(data);
-  // Store raw PDF in mediaStore as backup
-  await saveMediaBlob(
-    pdfSrc(pdfId),
-    new Blob([bytes], { type: 'application/pdf' }),
-  );
-
-  const loadingTask = pdfjsLib.getDocument({ data: bytes });
-  const pdfDoc = await loadingTask.promise;
-  const pageCount = pdfDoc.numPages;
-  const pages: RasterizedPage[] = [];
-
-  try {
-    for (let i = 1; i <= pageCount; i++) {
-      const page = await pdfDoc.getPage(i);
-      // 2x scale gives ~192–200 DPI for crisp print quality
-      const viewport = page.getViewport({ scale: 2 });
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(viewport.width);
-      canvas.height = Math.round(viewport.height);
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        await page.render({ canvasContext: ctx, viewport }).promise;
-      }
-      const blob = await new Promise<Blob>((resolve) => {
-        canvas.toBlob((b) => resolve(b || new Blob([])), 'image/png');
-      });
-
-      const pageAssetId = newAssetId(`pdf_page_${pdfId}_p${i}`);
-      const objectUrl = await saveMediaBlob(pageAssetId, blob);
-
-      pages.push({
-        pageNumber: i,
-        assetId: pageAssetId,
-        blob,
-        objectUrl,
-        width: viewport.width / 2,
-        height: viewport.height / 2,
-      });
-
-      // Release the page's canvas and its bitmap as soon as it is stored: a
-      // 200-page import otherwise holds every rendered page in memory until it
-      // finishes, which is what made large PDFs stall the tab.
-      page.cleanup();
-      canvas.width = 0;
-      canvas.height = 0;
-    }
-  } finally {
-    // Hand the worker's memory back whether the import succeeded or threw.
-    await pdfDoc.destroy().catch(() => undefined);
-  }
-
-  return { pdfId, pageCount, pages };
-}
-
-/**
- * Legacy count fallback or quick counting.
+ * Count the pages in a PDF.
+ *
+ * NOTE: pdf.js takes *ownership* of the bytes you hand it - it transfers the
+ * underlying ArrayBuffer to its worker, which leaves the caller's buffer
+ * detached. Any later read of that buffer (`new Uint8Array(buf)`, a second
+ * `getDocument` call) throws "Cannot perform Construct on a detached
+ * ArrayBuffer". Counting must therefore never consume the caller's copy, so
+ * this works on a clone.
  */
 export async function pdfPageCount(data: ArrayBuffer): Promise<number> {
-  const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(data) });
+  const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(data.slice(0)) });
   try {
     const pdfDoc = await loadingTask.promise;
     const count = pdfDoc.numPages;
@@ -165,15 +94,4 @@ export function registerPdf(id: string, dataUrl: string): void {
   } catch {
     // ignore
   }
-}
-
-/**
- * Resolve an image or PDF asset URL for rendering.
- */
-export async function resolvePdfSrc(src: string | undefined | null): Promise<string | null> {
-  if (!src) return null;
-  if (isAssetRef(src)) {
-    return resolveMediaUrl(src);
-  }
-  return src;
 }

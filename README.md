@@ -101,7 +101,7 @@ Text never sits on the page itself - it sits in a **frame**. A frame can be:
 | Image | A picture, cropped (`cover`) or whole (`contain`) | **Insert ▸ Image**, or drop art in |
 | Shape | A filled rectangle (the orange cards) | **Insert ▸ Shape** |
 | Line | A free-standing rule | **Insert ▸ Line** |
-| PDF | An imported PDF page, rasterised and print-faithful | the pages pane ▸ *Insert PDF* |
+| PDF | An imported PDF page, shown live so its text stays selectable | the pages pane ▸ *Insert PDF* |
 | Sheet | An empty-page marker that reserves a blank page | automatic |
 | Tombstone | The end-of-piece marker (◼), pinned furniture | **Insert ▸ Tombstone**. You can also turn it on for the page via Tools ▸ Preferences |
 
@@ -318,7 +318,7 @@ There is no server. A document exists in three places, all local to the browser:
 | ----- | -------------- | ----- |
 | `localStorage` | `bulletin.recentDocs` | Up to **16** recent documents (title, HTML, frames JSON, page names, master page) |
 | `localStorage` | `bulletin.docVersions` | Up to **10** snapshots per document, recorded when the word count drifts by 15 words |
-| IndexedDB | `bulletin_media_db` → `media` | Pictures and rasterised PDF pages, as binary blobs |
+| IndexedDB | `bulletin_media_db` → `media` | Pictures, and whole imported PDF files, as binary blobs |
 
 Heavy binary data never goes into `localStorage` (which is capped around 5 MB):
 a picture's `src` is written to IndexedDB and the frame is left holding a
@@ -556,8 +556,8 @@ src/
     master.ts              Master pages: masters, assignment, bands, Tab stops, fields
     format.ts              The .bulletin file format (serialize / parse / download)
     storage.ts             localStorage: recent docs, versions, purge, media offload
-    mediaStore.ts          IndexedDB: images and rasterised PDF pages, asset refs
-    pdfStore.ts            PDF import: rasterise pages with pdfjs, store, resolve
+    mediaStore.ts          IndexedDB: pictures and imported PDFs, asset refs
+    pdfStore.ts            PDF import: count pages with pdfjs, store the file, resolve it
     merge.ts               Merging parts into an issue + the Page of Contents
     frameStyle.ts          A frame's standard type; sanitising pasted/borrowed type
     paragraphStyles.ts*    Named house paragraph styles
@@ -656,9 +656,11 @@ preloaded on hover).
 
 - **Printing** uses the browser's own dialog (`Ctrl+P`) against a print
   stylesheet: the chrome (`no-print`) is hidden, the sheet loses its shadow and
-  zoom transform, and one sheet becomes one printed page. Rasterised PDF pages
-  are printed as images, which is why an imported PDF prints faithfully where an
-  embedded viewer would come out blank.
+  zoom transform, and one sheet becomes one printed page. An imported PDF is
+  embedded as the *original vector file* through the browser's own viewer rather
+  than flattened to images, so its text and line art stay selectable on screen
+  and come out as real text on paper - printing one is the browser's viewer's
+  job, and that is the one piece of a sheet the app does not lay out itself.
 - **Fonts**: the four house typefaces live in `public/fonts` and are declared with
   `local(…)` first in `@font-face`, so an installed copy is used with no download
   at all. Everything else is Google Fonts, on demand.
@@ -679,5 +681,9 @@ preloaded on hover).
 - **`src/lib/snapping.ts`** implements margin / centre / gutter / neighbour
   snapping geometry that nothing imports yet - the frames do not snap while
   dragging. It is finished work waiting for an owner, not dead code.
+- **Imported PDF pages print through the browser's PDF viewer.** Keeping the
+  file vector is what makes its text selectable, so how faithfully it lands on
+  paper is the viewer's business, not ours: if a page must be flattened, print
+  the PDF separately, or take a screenshot and place it as an image.
 - **Word count and spellcheck** are the browser's; there is no translation
   service, because that would need a paid API or a sign-up.

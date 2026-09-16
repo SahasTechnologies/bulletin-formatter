@@ -1,5 +1,5 @@
 /**
- * IndexedDB-backed media storage for images and rasterized PDF pages.
+ * IndexedDB-backed media storage for pictures and imported PDF files.
  *
  * Moving heavy image data URLs and PDF base64 payloads out of localStorage
  * eliminates the ~5MB quota ceiling, allowing documents with high-res photos

@@ -24,7 +24,7 @@ import MergeDialog from './components/MergeDialog';
 import { FeedbackProvider, useFeedback } from './components/Feedback';
 import { navigate, usePath } from './lib/router';
 import { mergeIssue, type MergeResult } from './lib/merge';
-import { splitIntoBoxes, TRANSPARENT_GIF } from './lib/frames';
+import { splitIntoBoxes, CONTENT_INSET, TRANSPARENT_GIF } from './lib/frames';
 import { sanitizeFrameText } from './lib/frameStyle';
 import { tombstoneCorner } from './lib/marker';
 import { GUIDE_PAGES, type GuidePage } from './data/designGuide';
@@ -108,8 +108,8 @@ function preloadTemplateFonts(html: string): void {
     the templates' own design geometry, not a margin the editor enforces -
     there are no margins, and a frame may sit anywhere on the sheet. */
 const TEMPLATE_PAGE = { width: 794, height: 1123 };
-const TEMPLATE_PAD_X = 96;
-const TEMPLATE_PAD_Y = 80;
+const TEMPLATE_PAD_X = CONTENT_INSET.x;
+const TEMPLATE_PAD_Y = CONTENT_INSET.y;
 /** Smallest sensible body frame once the title has taken the top of the page. */
 const TEMPLATE_MIN_BODY_H = 140;
 
@@ -1433,23 +1433,10 @@ function AppShell() {
           // Dynamic ids: table grid, symbols, paragraph styles, language.
           const table = /^insert\.table\.(\d+)x(\d+)$/.exec(id);
           if (table) {
-            const rows = Math.min(20, Number(table[1]));
-            const cols = Math.min(20, Number(table[2]));
-            ed.exec(
-              'insertHTML',
-              '<table style="border-collapse:collapse;width:100%"><tbody>' +
-                Array.from({ length: rows })
-                  .map(
-                    () =>
-                      '<tr>' +
-                      Array.from({ length: cols })
-                        .map(() => '<td style="border:1px solid #d6cfc4;padding:8px">&nbsp;</td>')
-                        .join('') +
-                      '</tr>',
-                  )
-                  .join('') +
-                '</tbody></table><p><br></p>',
-            );
+            // `insertTable` also steps the caret into the first cell: leaving it
+            // in the paragraph *after* the table meant you inserted a grid,
+            // typed, and watched the words land underneath it.
+            ed.insertTable(Number(table[1]), Number(table[2]));
             break;
           }
           if (id.startsWith('insert.char.')) {

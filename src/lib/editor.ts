@@ -543,6 +543,53 @@ export function formatBlock(tag: string): void {
   exec('formatBlock', `<${tag}>`);
 }
 
+/**
+ * Insert a `rows` × `cols` table at the caret, in the house rules-and-borders
+ * style, and leave the caret in its first cell.
+ *
+ * A table is text content here, not a page object: it lives inside whichever
+ * frame the caret is in (like Insert ▸ Horizontal line), which is also why the
+ * flow engine treats a frame holding one as unsplittable.
+ */
+export function insertTable(rows: number, cols: number): void {
+  if (!editorEl) return;
+  const r = Math.max(1, Math.min(8, Math.round(rows) || 1));
+  const c = Math.max(1, Math.min(8, Math.round(cols) || 1));
+  const cell =
+    '<td style="border:1px solid #d8d2ca;padding:4px 6px;vertical-align:top"><br></td>';
+  const body = `<tr>${cell.repeat(c)}</tr>`.repeat(r);
+  exec(
+    'insertHTML',
+    `<table style="width:100%;border-collapse:collapse;margin:0 0 12px">${body}</table>`,
+  );
+
+  // The browser leaves the caret inside or right after what it inserted; walk
+  // up to the table, give it a paragraph to be followed by, and step the caret
+  // into the first cell so the user can type without hunting for it.
+  const sel = window.getSelection();
+  if (!sel) return;
+  let node: Node | null = sel.anchorNode;
+  if (node && node.nodeType === Node.TEXT_NODE) node = node.parentNode;
+  while (node && node !== editorEl && !(node instanceof HTMLTableElement)) {
+    node = node.parentNode;
+  }
+  const table = node instanceof HTMLTableElement ? node : null;
+  if (!table) return;
+  if (!(table.nextElementSibling instanceof HTMLParagraphElement)) {
+    const after = document.createElement('p');
+    after.appendChild(document.createElement('br'));
+    table.after(after);
+  }
+  const firstCell = table.querySelector('td, th');
+  if (!firstCell) return;
+  const at = document.createRange();
+  at.setStart(firstCell, 0);
+  at.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(at);
+  savedRange = at.cloneRange();
+}
+
 export function clearFormatting(): void {
   exec('removeFormat');
 }
