@@ -82,20 +82,58 @@ function Highlighted({ text, positions }: { text: string; positions: number[] })
   );
 }
 
-const DOC_WIDTH = 816; // matches A4 page width in px
+/**
+ * The sheet the editor actually lays out: A4 at 96dpi.
+ *
+ * The thumbnails used to be drawn on a Letter-shaped box (816×1056), so every
+ * preview was a little wider and shorter than the page it stood for - and a
+ * "Page of contents" that fits one sheet on screen looked like it no longer
+ * would on paper. Same size, same shape, same furniture as the real thing.
+ */
+const DOC_WIDTH = 794;
+const PAGE_HEIGHT = 1123;
+const PAGE_RATIO = `${DOC_WIDTH}/${PAGE_HEIGHT}`;
+
+/** The master frame's inset from the trim, as the editor draws it. */
+const FURNITURE_INSET = 48;
+
+/**
+ * Where a template's own frames start: `data-frame="96,80,602,…"` in every
+ * template file, i.e. a 602px content column with a 96px side margin and an
+ * 80px top one. Previews used to pad 56/64, which drew the type wider and
+ * higher up the sheet than the page it stands for.
+ */
+const PAGE_PADDING = { padding: '80px 96px' } as const;
+
+/** Master furniture styles, matching the sheet's own running head and folio. */
+const FURNITURE_STYLE = {
+  fontFamily: "Biome,'Red Hat Text','Segoe UI',Arial,sans-serif",
+  fontSize: 22,
+  color: '#9a938a',
+} as const;
+
+/** Resolve the master's @page / @month / @year tokens with sample values, so a
+    thumbnail shows the furniture the page really opens with. */
+function sampleFurniture(text: string, page = 1): string {
+  const now = new Date();
+  return text
+    .replace(/@page/g, String(page))
+    .replace(/@month/g, now.toLocaleString('en-GB', { month: 'long' }))
+    .replace(/@year/g, String(now.getFullYear()));
+}
 
 /** Miniature page thumbnail used for doc hits in the dropdown. */
 function MiniDoc({ content }: { content: string }) {
   return (
     <div
       className="relative w-[30px] flex-none overflow-hidden rounded-[3px] border border-gdoc-border bg-white"
-      style={{ aspectRatio: '816/1056' }}
+      style={{ aspectRatio: PAGE_RATIO }}
     >
       <div
         className="pointer-events-none absolute left-0 top-0 origin-top-left"
         style={{ width: DOC_WIDTH, transform: `scale(${30 / DOC_WIDTH})` }}
       >
-        <div className="px-14 py-16 opacity-80" dangerouslySetInnerHTML={{ __html: content }} />
+        <div style={PAGE_PADDING} className="opacity-80" dangerouslySetInnerHTML={{ __html: content }} />
       </div>
     </div>
   );
@@ -192,7 +230,7 @@ export default function HomeScreen({
           alt="Baulko Bulletin"
           className="h-8 w-8 flex-none object-contain"
         />
-        <span className="flex-none text-[20px] font-medium">Bulletin</span>
+        <span className="flex-none text-[20px] font-medium">Formatter</span>
 
         <div ref={searchRef} className="relative mx-auto flex h-11 max-w-[640px] flex-1 items-center">
           <div className="flex h-full w-full items-center gap-3 rounded-full border border-gdoc-border bg-[#f8f9fa] px-4 focus-within:border-bb-400 focus-within:bg-white">
@@ -355,7 +393,12 @@ export default function HomeScreen({
                   {tpl.cover ? (
                     <CoverThumb label={tpl.cover.ph} />
                   ) : (
-                    <ScaledDoc content={tpl.content} columns={tpl.frame?.columns} faint />
+                    <ScaledDoc
+                      content={tpl.content}
+                      columns={tpl.frame?.columns}
+                      master={tpl.master}
+                      faint
+                    />
                   )}
                   {/* The blank page wears a big plus, the way a document
                       picker should: "start from nothing". */}
@@ -563,7 +606,7 @@ function CoverThumb({ label }: { label: string }) {
   return (
     <div
       className="relative w-full"
-      style={{ aspectRatio: '816/1056', background: '#fff' }}
+      style={{ aspectRatio: PAGE_RATIO, background: '#fff' }}
     >
       <div className="absolute inset-2 grid place-items-center rounded-[3px] border border-dashed border-gdoc-border bg-[#faf8f5]">
         <span className="flex flex-col items-center gap-1 text-gdoc-muted">
@@ -577,15 +620,19 @@ function CoverThumb({ label }: { label: string }) {
 
 /** Render document HTML scaled down to fit its container, like a page icon.
     `columns` mirrors a template's text-frame columns so a two-column page
-    previews with its gray rule, not as one wide column. */
+    previews with its gray rule, not as one wide column, and `master` draws the
+    running head and folio that every page opens with but the content HTML
+does not contain. */
 function ScaledDoc({
   content,
   faint,
   columns,
+  master,
 }: {
   content: string;
   faint?: boolean;
   columns?: number;
+  master?: { header: string; footer: string };
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0);
@@ -605,15 +652,26 @@ function ScaledDoc({
     <div
       ref={boxRef}
       className="relative w-full overflow-hidden"
-      style={{ aspectRatio: '816/1056', background: '#fff' }}
+      style={{ aspectRatio: PAGE_RATIO, background: '#fff' }}
     >
       <div
         className="pointer-events-none absolute left-0 top-0 origin-top-left"
         style={{ width: DOC_WIDTH, transform: scale ? `scale(${scale})` : undefined }}
       >
+        {master && (
+          <>
+            <div className="absolute text-right" style={{ ...FURNITURE_STYLE, top: 28, right: FURNITURE_INSET }}>
+              {sampleFurniture(master.header)}
+            </div>
+            <div className="absolute" style={{ ...FURNITURE_STYLE, bottom: 24, left: FURNITURE_INSET }}>
+              {sampleFurniture(master.footer)}
+            </div>
+          </>
+        )}
         <div
-          className={`px-14 py-16 ${faint ? 'opacity-70' : ''}`}
+          className={faint ? 'opacity-70' : ''}
           style={{
+            ...PAGE_PADDING,
             columnCount: cols,
             columnGap: cols > 1 ? 28 : undefined,
             columnRule: cols > 1 ? '1px solid #d8d2ca' : undefined,

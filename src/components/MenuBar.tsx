@@ -175,6 +175,7 @@ const MENUS: Record<string, MenuItem[]> = {
       { id: 'file.download.bulletin', label: 'Bulletin (.bulletin)', icon: Download },
       { id: 'file.download.html', label: 'Web page (.html)', icon: FileCode },
       { id: 'file.download.txt', label: 'Plain text (.txt)', icon: FileType },
+      { id: 'file.download.pdf', label: 'PDF (print ▸ Save as PDF)', icon: Printer },
     ] },
     'sep',
     { id: 'file.rename', label: 'Rename', icon: Pencil },

@@ -1235,6 +1235,14 @@ function AppShell() {
         case 'file.download.txt':
           if (docHtmlRef.current) downloadText(title || 'untitled', docHtmlRef.current);
           break;
+        case 'file.download.pdf':
+          // There is no PDF library in the bundle and none is needed: the print
+          // stylesheet already lays one sheet onto one printed page, so the
+          // browser's own "Save as PDF" destination produces the file - with
+          // the type still as type, because imported PDFs stay vector.
+          toast('Choose “Save as PDF” as the destination to export a PDF.', { kind: 'info' });
+          window.print();
+          break;
         case 'file.trash': {
           const d = activeDocRef.current;
           if (!d) break;
@@ -1649,11 +1657,6 @@ function AppShell() {
           pages={GUIDE_PAGES}
           hasOpenDoc={!!activeDoc}
           onEdit={applyGuidePage}
-          onDownload={() => {
-            // The guide's last step hands the finished page to the Master, so
-            // it reaches the same exporter the File menu uses.
-            if (activeDoc) exportBulletin();
-          }}
           onBack={() => navigate('/')}
         />
       ) : screen === 'home' ? (

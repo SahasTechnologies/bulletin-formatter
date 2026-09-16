@@ -1109,3 +1109,34 @@ body {
     animation: none !important;
   }
 }
+
+/* ---- Confetti: the guide's "you are finished" shower ---------------------
+   One keyframe rule drives every piece; the per-piece numbers (delay,
+   duration, drift, spin) come from inline styles set in Confetti.tsx. */
+.confetti-piece {
+  animation-name: confetti-fall;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+  will-change: transform, opacity;
+}
+
+@keyframes confetti-fall {
+  0% {
+    transform: translate3d(0, -12vh, 0) rotate(0deg);
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(var(--confetti-drift, 0px), 112vh, 0) rotate(var(--confetti-spin, 720deg));
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confetti-piece {
+    animation: none;
+    opacity: 0;
+  }
+}

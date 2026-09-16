@@ -83,11 +83,19 @@ export const GUIDE_GENERAL_RULES: string[] = [
   'Finish every piece with a tombstone: right-aligned for articles, centred beneath the last line for poems.',
 ];
 
-export const GUIDE_PAGES: GuidePage[] = [
-  {
-    id: 'set-up',
-    name: 'Set up',
-    section: 'Set up',
+/**
+ * Setting up the master page.
+ *
+ * This used to be a guide entry of its own ("Set up"), as if it were one more
+ * part of the issue to go and edit. It is not: the running head and folio live
+ * on the master page of *every* template, so the guide now shows this block on
+ * each of its pages instead of hiding it behind a nav entry a formatter has to
+ * know to click first.
+ */
+export const GUIDE_MASTER_SETUP: GuidePage = {
+    id: 'master-setup',
+    name: 'Master page',
+    section: 'Every page, first',
     summary:
       'The running head and folio live on the master page: "Baulko Bulletin | n+#" top-right, and the page number with the month and year in the footers. Set this once and every sheet inherits it.',
     rules: [
@@ -124,7 +132,9 @@ export const GUIDE_PAGES: GuidePage[] = [
 </table>`,
       },
     ],
-  },
+};
+
+export const GUIDE_PAGES: GuidePage[] = [
   {
     id: 'title-page',
     name: 'Title page',
@@ -477,6 +487,185 @@ export const EDITABLE_GUIDE_PAGES = GUIDE_PAGES.filter((p) => p.templateId);
 export function getGuidePage(id: string): GuidePage | undefined {
   return GUIDE_PAGES.find((p) => p.id === id);
 }
+
+/* ---- The steps that are the same for every piece ------------------------ */
+
+/**
+ * Paste, illustrate, trim, sign off, send - the five moves every piece needs,
+ * whichever template it started from. The reference guide shows these on every
+ * page of the guide rather than repeating them inside each one, because they
+ * are not about the *kind* of piece: they are the job.
+ */
+export const GUIDE_WORKFLOW_STEPS: GuideStep[] = [
+  {
+    title: 'Paste the article into its frame',
+    body: 'Click into the body frame, select the template\'s lorem text and paste the real words over it. Everything you type stays in the frame, so the sheet\'s shape does not move. Do not paste into the master page - that furniture belongs to every page.',
+    click: 'Click the body frame ▸ Ctrl+V',
+    preview: `<div style="border:1px solid #e5ddd0;background:#fff;padding:10px 12px;font-family:${BODY};font-size:13pt;line-height:1.45;color:#262626;${MARK}">
+  <p style="margin:0;font-family:${FG};font-size:26px;color:#3f3f3f;">[Headline]</p>
+  <p style="margin:2px 0 8px;font-family:${BYLINE};font-size:14px;color:#808080;">By [Writer's name]</p>
+  <p style="margin:0;">Paste the article here - the frame keeps its width, so the columns fill top to bottom and stop at the margin.</p>
+</div>`,
+  },
+  {
+    title: 'Insert the images and size them',
+    body: 'Insert ▸ Image… drops a picture into a frame of its own; drag a corner handle to size it, and use Fit to choose whether the whole picture is shown (contain) or cropped to fill the frame (cover). Artwork pages start with the frame already open.',
+    click: 'Insert ▸ Image…',
+    preview: `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-family:${BODY};font-size:12pt;color:#262626;">
+  <div style="border:1px dashed #c9c1b5;background:#faf8f5;height:110px;display:grid;place-items:center;${MARK}">Image - fit: contain</div>
+  <div style="border:1px solid #e5ddd0;background:#efe9e1;height:110px;display:grid;place-items:center;">Image - fit: cover (cropped)</div>
+</div>`,
+  },
+  {
+    title: 'Delete the sheets you do not need',
+    body: 'Every template opens with more sheets than one piece fills. In the pages pane, right-click a thumbnail and delete it; the folio and the running head renumber themselves, so nothing needs fixing by hand.',
+    click: 'Pages pane ▸ right-click ▸ Delete page',
+  },
+  {
+    title: 'Finish the piece with the tombstone',
+    body: 'Insert ▸ Tombstone pins the little black square to the bottom-right corner of the last sheet - outside the master page\'s frame and clear of the footer band. It is furniture, not type: it is placed for you and can be removed, never dragged into the text.',
+    click: 'Insert ▸ Tombstone',
+    preview: `<div style="position:relative;height:96px;border:1px solid #e5ddd0;background:#fff;">
+  <span style="position:absolute;left:10px;bottom:8px;font-family:${BODY};font-size:11pt;color:#8a8378;">1 | September 2026</span>
+  <span style="position:absolute;right:12px;bottom:12px;width:14px;height:14px;background:#262626;display:inline-block;${MARK}"></span>
+</div>`,
+  },
+  {
+    title: 'Download the page and hand it in',
+    body: 'File ▸ Download ▸ Bulletin (.bulletin) saves the page as a file that carries its words, frames, pictures and master page. Upload it to the issue\'s assignment in the Google Classroom; if there is no assignment, email it to the Formatter Master - everyone\'s addresses are in the Classroom material for the issue.',
+    click: 'File ▸ Download ▸ Bulletin (.bulletin)',
+  },
+];
+
+/* ---- The two interactive walkthroughs ----------------------------------- */
+
+/** One step of an interactive walkthrough, as the `/guide` wizard shows it. */
+export interface WalkthroughStep {
+  /** Imperative one-liner. */
+  title: string;
+  body: string;
+  /** The menu path or button that does the work. */
+  click?: string;
+  /** Options the formatter picks between; picking one opens its template. */
+  choices?: { label: string; templateId: string }[];
+  /** Background for the Formatter Master, who does this once per issue. */
+  aside?: string;
+  /** A mock-up, in the page's own HTML (see `GuideStep.preview`). */
+  preview?: string;
+}
+
+/**
+ * "I don't know, I'm new here" - the whole job, start to finish, for someone
+ * formatting one piece of an issue for the first time.
+ */
+export const NEW_FORMATTER_STEPS: WalkthroughStep[] = [
+  {
+    title: 'Get your assignment',
+    body: 'Open the Formatting sheet in the Baulko Bulletin Google Classroom and put your name next to the one piece you are going to format. If two people want the same piece, settle it in the Classroom before you start - not here.',
+    click: 'Google Classroom ▸ the Formatting sheet',
+    preview: `<table style="width:100%;border-collapse:collapse;font-family:${BODY};font-size:12pt;color:#262626;">
+  <tr><td style="padding:4px 6px;border-bottom:1px solid #e5ddd0;">1 - Article</td><td style="padding:4px 6px;border-bottom:1px solid #e5ddd0;color:#8a8378;">[Headline]</td><td style="padding:4px 6px;border-bottom:1px solid #e5ddd0;${MARK}">your name</td></tr>
+  <tr><td style="padding:4px 6px;border-bottom:1px solid #e5ddd0;">2 - Puzzle</td><td style="padding:4px 6px;border-bottom:1px solid #e5ddd0;color:#8a8378;">[Puzzle title]</td><td style="padding:4px 6px;border-bottom:1px solid #e5ddd0;color:#8a8378;">taken</td></tr>
+  <tr><td style="padding:4px 6px;">3 - Poem</td><td style="padding:4px 6px;color:#8a8378;">[Poem title]</td><td style="padding:4px 6px;color:#8a8378;"></td></tr>
+</table>`,
+  },
+  {
+    title: 'Keep this tab for the steps, and edit in a new tab',
+    body: 'This tab is your reference - the steps stay here while you work. Open a new tab (Ctrl+T), open Bulletin Formatter in it, and do the actual editing there. Come back here whenever you are not sure what is next.',
+    click: 'Ctrl+T ▸ open Bulletin Formatter',
+  },
+  {
+    title: 'Are you formatting an article or a poem?',
+    body: 'Articles are two-column pages; poems are single-column with the title, byline, rule and marker as separate pieces. Pick the one you are formatting - the remaining steps are the same either way.',
+    choices: [
+      { label: 'An article - open that template', templateId: 'bulletin-article' },
+      { label: 'A poem - open that template', templateId: 'bulletin-poem' },
+    ],
+  },
+  {
+    title: 'Set the master page',
+    body: 'The running head and folio are never typed on each sheet - they live on the master page, so one edit dresses every page: “Baulko Bulletin | n+33” top-right, the page number with the month and year in the footers. The tombstone is deliberately *not* master furniture: keep it off the master page so it only appears where a piece actually ends.',
+    click: 'View ▸ Master page…',
+    aside: 'If the issue number or the month looks wrong, fix it here once - it is wrong on the whole issue otherwise.',
+    preview: `<div style="position:relative;height:120px;border:1px solid #e5ddd0;background:#fff;font-family:${BODY};font-size:12pt;color:#262626;">
+  <span style="position:absolute;right:10px;top:8px;${MARK}padding:2px 6px;">Baulko Bulletin | n+33</span>
+  <span style="position:absolute;left:12px;bottom:8px;padding:2px 6px;">1 | September 2026</span>
+  <span style="position:absolute;right:12px;bottom:8px;padding:2px 6px;">September 2026 | 2</span>
+</div>`,
+  },
+  {
+    title: 'Paste the article into the frames',
+    body: 'Click the body frame and paste the writing over the template\'s lorem text, then style the headline and byline the way the page asks. Nothing you type should land outside a frame.',
+    click: 'Click the body frame ▸ Ctrl+V',
+  },
+  {
+    title: 'Insert the images and size them',
+    body: 'Insert ▸ Image… for each picture, then drag a corner handle to size it. Fit: contain keeps the whole picture, Fit: cover crops it to fill the frame - artwork and puzzle pages open with the frame already full-page.',
+    click: 'Insert ▸ Image…',
+  },
+  {
+    title: 'Delete the pages you do not need',
+    body: 'The template came with more sheets than your piece fills. Right-click the extra thumbnails in the pages pane and delete them; the headers and page numbers renumber themselves.',
+    click: 'Pages pane ▸ right-click ▸ Delete page',
+  },
+  {
+    title: 'Add the tombstone to the last page',
+    body: 'Insert ▸ Tombstone puts the end-of-piece marker in the bottom-right corner of the last sheet of the piece - outside the master page\'s frame, so it never lands in the type or on pages that do not need it. Right-aligned for an article, centred under the last line for a poem.',
+    click: 'Insert ▸ Tombstone',
+    aside: 'A piece which ends mid-page still gets its marker on that page - the marker is furniture, and it can be removed but never dragged.',
+    preview: `<div style="position:relative;height:110px;border:1px solid #e5ddd0;background:#fff;">
+  <span style="position:absolute;left:10px;bottom:8px;font-family:${BODY};font-size:11pt;color:#8a8378;">1 | September 2026</span>
+  <span style="position:absolute;right:12px;bottom:12px;width:14px;height:14px;background:#262626;display:inline-block;${MARK}"></span>
+</div>`,
+  },
+  {
+    title: 'Download the page as a .bulletin file',
+    body: 'File ▸ Download ▸ Bulletin (.bulletin) saves everything the Master needs: the words, the frames, the pictures and the master page. Do not send a screenshot or a PDF for this step - the .bulletin file is what keeps the layout.',
+    click: 'File ▸ Download ▸ Bulletin (.bulletin)',
+  },
+  {
+    title: 'Hand it in',
+    body: 'If the Classroom has an assignment for this issue, upload your .bulletin file there. If it does not, email the file to the Formatter Master - the material for the issue lists everyone\'s addresses. Then you are done: the Master merges your page into the issue exactly as you laid it out.',
+    aside: 'Never re-type or re-format the piece somewhere else on the way in - the file is the finished page, and merging it is what keeps it finished.',
+  },
+];
+
+/**
+ * What the Formatter Master does once everyone has handed their pages in: put
+ * the issue together, keep it, and export it.
+ */
+export const FORMATTER_MASTER_STEPS: WalkthroughStep[] = [
+  {
+    title: 'Collect everyone\'s pages',
+    body: 'Gather the .bulletin files the team handed in - from the Classroom assignment, or by email - and download them onto the computer you are building the issue on.',
+    click: 'Google Classroom ▸ the issue assignment ▸ Download all',
+  },
+  {
+    title: 'Merge them into one issue',
+    body: 'Home screen ▸ Merge, and pick every .bulletin file at once. The tool recognises what each file is (cover, contents, article, poem, puzzle, graphic, end page) and offers them in issue order rather than the order you picked them.',
+    click: 'Home ▸ Merge',
+  },
+  {
+    title: 'Let it build the page of contents',
+    body: 'Tick “generate a page of contents” and the Merge writes the contents list for you - each piece with the page it starts on - and reserves exactly as many sheets as the list needs. The title page and the end page belong in the file set already: the cover first, the credits last.',
+    click: 'Merge ▸ Page of contents',
+  },
+  {
+    title: 'Check that everything is there',
+    body: 'Read the contents list against the pieces you collected: every article, poem, puzzle and graphic present, in an order that reads well, the title page first and the end page last. Fix the order with the arrows in the dialog before you merge - it is much harder afterwards.',
+    click: 'Merge ▸ the arrows next to each file',
+  },
+  {
+    title: 'The issue is saved as you work',
+    body: 'The merged issue opens as a document of its own, and documents save themselves in this browser, so there is nothing to do to keep it: close the tab, come back tomorrow, and it is on the home screen under Recent documents. Copy it (File ▸ Make a copy) before trying anything drastic.',
+    aside: 'Nothing lives in the cloud. The browser copy is the only copy - export a .bulletin file whenever an issue is finished.',
+  },
+  {
+    title: 'Export the finished issue',
+    body: 'File ▸ Download ▸ Bulletin (.bulletin) hands the whole issue on as one file the team can reopen. When you need something to print or share, File ▸ Print (Ctrl+P) and choose “Save as PDF” - the print stylesheet lays one sheet onto each printed page.',
+    click: 'File ▸ Download ▸ Bulletin, or File ▸ Print ▸ Save as PDF',
+  },
+];
 
 /** Classify a document/template as an issue part, for ordering a merge. */
 export function guidePositionOf(templateId?: string, title = ''): GuidePosition {
