@@ -313,7 +313,15 @@ function framesFromDataAttrs(html: string): Array<Record<string, unknown>> {
   return out;
 }
 
-export function templateBoxes(tpl: Template): string | null {
+/**
+ * The frame model a template opens with, or null when it has none to build.
+ *
+ * Not exported: it is App's own helper, and a module that exports something
+ * other than a component cannot be hot-reloaded (Vite bails out and reloads
+ * the whole page instead), so a stray `export` here costs every future edit a
+ * full reload.
+ */
+function templateBoxes(tpl: Template): string | null {
   const sheets = tpl.sheets ?? [];
   if (!tpl.frame && !tpl.cover && !tpl.layout && !sheets.length) return null;
   const boxes: Array<Record<string, unknown>> = [];
