@@ -6,4 +6,10 @@ dist
 !.vscode/extensions.json
 .idea
 *.tsbuildinfo
+# Vite writes a temporary copy of the config on every reload
+vite.config.ts.timestamp-*
+# Screenshots from manual dev runs - never part of the app (root-level only,
+# so real artwork under public/ is unaffected)
+/shot-*.png
+/paste.png
 .*
