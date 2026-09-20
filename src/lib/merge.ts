@@ -7,7 +7,7 @@
  * starts on.
  */
 import { splitIntoBoxes } from './frames';
-import { parseBulletin, type BulletinDoc } from './format';
+import { escapeHtml, parseBulletin, type BulletinDoc } from './format';
 import { COLUMN_RULE_COLOR, COLUMN_RULE_WIDTH } from './textbox';
 
 /** A4 portrait - the page every bulletin is laid out for. */
@@ -234,7 +234,6 @@ export function mergeIssue(inputs: MergeInput[], opts: MergeOptions): MergeResul
   // pages after the covers. Everything after that shifts down by that much.
   const contentsAt = front.length;
   let page = 1;
-  const spans = new Map<MergeInput, number>();
   const entries: MergeEntry[] = [];
 
   const take = (part: MergeInput | null, isContents: boolean) => {
@@ -243,7 +242,6 @@ export function mergeIssue(inputs: MergeInput[], opts: MergeOptions): MergeResul
       return;
     }
     const span = partSpan(part.doc);
-    spans.set(part, span);
     entries.push({ title: part.title, kind: part.kind, page });
     page += span;
   };
@@ -337,6 +335,3 @@ export function mergeIssue(inputs: MergeInput[], opts: MergeOptions): MergeResul
   };
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}

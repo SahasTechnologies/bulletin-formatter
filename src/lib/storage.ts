@@ -37,7 +37,18 @@ export interface StoredDocument {
 }
 
 const KEY = 'bulletin.recentDocs';
-const MAX = 16;
+
+/**
+ * How many documents this browser keeps.
+ *
+ * A document that fell off the end used to be dropped silently: its entry was
+ * sliced away while its version history and its pictures stayed behind in
+ * IndexedDB forever, and the home screen looked exactly the same either way. The
+ * cap is generous now, and what it drops is both reported - `saveDoc` hands the
+ * evicted records back so the app can say which document went - and reclaimed
+ * (see `reclaimDropped`), so nothing is left orphaned either.
+ */
+export const MAX_DOCS = 60;
 
 const isDoc = (value: unknown): value is StoredDocument => {
   if (!value || typeof value !== 'object') return false;
@@ -176,14 +187,65 @@ export function loadRecentDocs(): StoredDocument[] {
   }
 }
 
-/** Persist the list. */
-function saveDocs(docs: StoredDocument[]) {
+/**
+ * Trim the list to the cap, handing back the documents that fall off the end
+ * so the caller can report them.
+ */
+function trimToCap(docs: StoredDocument[]): { kept: StoredDocument[]; dropped: StoredDocument[] } {
+  if (docs.length <= MAX_DOCS) return { kept: docs, dropped: [] };
+  const kept = docs.slice(0, MAX_DOCS);
+  const dropped = docs.slice(MAX_DOCS);
+  reclaimDropped(dropped, kept);
+  return { kept, dropped };
+}
+
+/**
+ * Release everything the documents dropped by the cap owned.
+ *
+ * Being pushed off the recent list is not a *delete*, so this deliberately does
+ * not run the user's deletion path - but leaving the snapshots and the pictures
+ * behind forever is what made the media database grow without bound, and gave
+ * `bulletin.docVersions` an entry for a document no longer reachable from any
+ * screen. Anything the surviving documents (or their own snapshots) still refer
+ * to is kept, exactly as `purgeDoc` does, because pictures are shared by
+ * reference.
+ */
+function reclaimDropped(dropped: StoredDocument[], kept: StoredDocument[]): void {
+  if (!dropped.length) return;
+  const versions = loadVersions();
+  const stillUsed = new Set<string>();
+  for (const d of kept) {
+    for (const ref of assetRefsOf(d.boxes)) stillUsed.add(ref);
+    for (const v of versions[d.id] ?? []) {
+      for (const ref of assetRefsOf(v.boxes)) stillUsed.add(ref);
+    }
+  }
+  let versionsChanged = false;
+  for (const d of dropped) {
+    const owned = new Set<string>([
+      ...assetRefsOf(d.boxes),
+      ...(versions[d.id] ?? []).flatMap((v) => assetRefsOf(v.boxes)),
+    ]);
+    if (versions[d.id]) {
+      delete versions[d.id];
+      versionsChanged = true;
+    }
+    for (const ref of owned) {
+      if (!stillUsed.has(ref)) void deleteMedia(ref);
+    }
+  }
+  if (versionsChanged) saveVersions(versions);
+}
+
+/** Persist the list, trimmed to the cap; returns the list as stored. */
+function saveDocs(docs: StoredDocument[]): StoredDocument[] {
+  const { kept } = trimToCap(docs);
   try {
-    localStorage.setItem(KEY, JSON.stringify(docs.slice(0, MAX)));
+    localStorage.setItem(KEY, JSON.stringify(kept));
   } catch (err) {
     console.warn('Failed to save to localStorage, attempting aggressive sanitization:', err);
     try {
-      const sanitized = docs.slice(0, MAX).map((d) => ({
+      const sanitized = kept.map((d) => ({
         ...d,
         boxes: stripEmbeddedMedia(d.boxes),
       }));
@@ -192,28 +254,42 @@ function saveDocs(docs: StoredDocument[]) {
       /* storage full or unavailable - non-fatal */
     }
   }
+  return kept;
+}
+
+/** What a save did: the list as stored, and anything the cap evicted. */
+export interface SaveOutcome {
+  docs: StoredDocument[];
+  /** Documents the cap dropped, in list order (the first is the one that just
+      crossed the line). Empty on an ordinary save. */
+  evicted: StoredDocument[];
 }
 
 /**
  * Upsert a document (by id), moving it to the front and stamping the
  * timestamp. Offloads heavy images to IndexedDB.
+ *
+ * A save that costs the user a document hands the evicted records back rather
+ * than swallowing them, so the app can say which one went (see `reportEviction`
+ * in App.tsx). Only a save that introduces a *new* document can evict: saving
+ * an existing one removes it from the list before re-adding it.
  */
-export function saveDoc(doc: StoredDocument): StoredDocument[] {
+export function saveDoc(doc: StoredDocument): SaveOutcome {
   const sanitizedDoc: StoredDocument = {
     ...doc,
     boxes: sanitizeBoxesForStorage(doc.boxes),
   };
   const docs = loadRecentDocs().filter((d) => d.id !== sanitizedDoc.id);
   docs.unshift(sanitizedDoc);
-  saveDocs(docs);
-  return docs.slice(0, MAX);
+  const { kept, dropped } = trimToCap(docs);
+  saveDocs(kept);
+  return { docs: kept, evicted: dropped };
 }
 
 /** Delete a document by id; returns the new list. */
 export function deleteDoc(id: string): StoredDocument[] {
   const docs = loadRecentDocs().filter((d) => d.id !== id);
-  saveDocs(docs);
-  return docs.slice(0, MAX);
+  return saveDocs(docs);
 }
 
 /** Every asset reference a serialized boxes string holds. */
@@ -254,9 +330,9 @@ export async function purgeDoc(id: string): Promise<StoredDocument[]> {
   delete remainingVersions[id];
 
   saveVersions(remainingVersions);
-  saveDocs(remaining);
+  const kept = saveDocs(remaining);
 
-  if (!victim) return remaining.slice(0, MAX);
+  if (!victim) return kept;
 
   const stillUsed = new Set<string>();
   for (const d of remaining) {
@@ -274,7 +350,7 @@ export async function purgeDoc(id: string): Promise<StoredDocument[]> {
     if (!stillUsed.has(ref)) await deleteMedia(ref);
   }
 
-  return remaining.slice(0, MAX);
+  return kept;
 }
 
 /**
@@ -314,8 +390,7 @@ export function renameDoc(id: string, title: string): StoredDocument[] {
   const hit = docs.find((d) => d.id === id);
   if (!hit) return docs;
   hit.title = title;
-  saveDocs(docs);
-  return docs.slice(0, MAX);
+  return saveDocs(docs);
 }
 
 /** Look up a single document by id. */

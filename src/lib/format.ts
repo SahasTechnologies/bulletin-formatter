@@ -101,6 +101,8 @@ function downloadBlob(data: string, type: string, filename: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-function escapeHtml(s: string): string {
+/** Escape the three characters that would otherwise open markup. Shared with
+    the Merge tool, which builds contents entries from user-supplied titles. */
+export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

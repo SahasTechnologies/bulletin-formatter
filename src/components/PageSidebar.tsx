@@ -739,7 +739,12 @@ function Modal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-[340px] rounded-lg border border-gdoc-border bg-[#f8f9fa] p-3 shadow-2xl">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="w-[340px] rounded-lg border border-gdoc-border bg-[#f8f9fa] p-3 shadow-2xl"
+      >
         <div className="mb-2 flex items-center justify-between">
           <span className="text-[13px] font-medium">{title}</span>
           <button

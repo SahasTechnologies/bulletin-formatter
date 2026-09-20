@@ -207,6 +207,16 @@ export function splitIntoBoxes(
     fit?: 'cover' | 'contain';
     ph?: string;
   }) => {
+    // Start a new sheet when this piece would not fit on the current one, so a
+    // frame never hangs off the bottom of the page. The test used to run *after*
+    // the cursor advanced, which only moved on once the position was already
+    // past the trim edge - leaving the last piece on each sheet overflowing by
+    // its own height. (Every caller clamps `h` to the page, so a piece always
+    // fits on a sheet of its own when it needs one.)
+    if (y > 0 && y + entry.h > page.height) {
+      pageIndex += 1;
+      y = 0;
+    }
     out.push({
       id: newBoxId(),
       pageIndex,
@@ -224,10 +234,6 @@ export function splitIntoBoxes(
       nextId: null,
     });
     y += entry.h + SPLIT_GAP;
-    if (y > page.height) {
-      pageIndex += 1;
-      y = 0;
-    }
   };
 
   for (const el of leaves) {

@@ -487,6 +487,12 @@ export default function DocumentCanvas({
         h: Math.round(b.h),
         html: b.kind ? '' : boxEls.current.get(b.id)?.innerHTML ?? b.html,
         columns: b.columns,
+        // The column rule belongs to this list too. `restoreState` rebuilds a
+        // frame from what it finds here, so a field the history never wrote down
+        // could not be brought back no matter what the rebuild knew about it -
+        // undo dropped a frame's rule even after the rebuild learned to read it.
+        rule: b.rule,
+        ruleWidth: typeof b.ruleWidth === 'number' ? Math.round(b.ruleWidth) : undefined,
         nextId: b.nextId,
         align: b.align,
         css: b.css,
@@ -776,6 +782,18 @@ export default function DocumentCanvas({
           thickness: typeof e.thickness === 'number' ? e.thickness : undefined,
           ph: typeof e.ph === 'string' ? e.ph : undefined,
           columns: typeof e.columns === 'number' ? e.columns : undefined,
+          // The rule, the alignment and the frame's text standard are part of
+          // the frame, not decoration laid over it. `snapshot` records all four
+          // - so leaving them out of the rebuild here meant an undo silently
+          // stripped a frame's column rule, its alignment and its `data-text`,
+          // even though the state being restored still held them.
+          rule: typeof e.rule === 'string' ? e.rule : undefined,
+          ruleWidth: typeof e.ruleWidth === 'number' ? e.ruleWidth : undefined,
+          align:
+            e.align === 'center' || e.align === 'right' || e.align === 'justify' || e.align === 'left'
+              ? e.align
+              : undefined,
+          css: typeof e.css === 'string' ? e.css : undefined,
         };
       });
       setSelId(null);
@@ -1175,6 +1193,10 @@ export default function DocumentCanvas({
   useEffect(() => {
     if (readOnly) return;
     const onKey = (e: KeyboardEvent) => {
+      // A modal owns the keyboard while it is up. Escape belongs to the dialog,
+      // and Delete/Backspace must not remove a frame *behind* it - focus sits on
+      // one of the dialog's buttons, which none of the checks below exclude.
+      if (document.querySelector('[aria-modal="true"]')) return;
       const focusEl = document.activeElement as HTMLElement | null;
       // Typing/backspacing inside a text field (document title, find/replace,
       // menu search…) must never delete the selected box.
@@ -1670,7 +1692,11 @@ export default function DocumentCanvas({
           const buf = reader.result as ArrayBuffer;
           const pages = await pdfPageCount(buf);
           const id = newPdfId();
-          registerPdf(id, bytesToDataUrl(new Uint8Array(buf)));
+          // Await the blob write: the frames about to be placed resolve their
+          // `pdf:` source through the media store, so inserting them before the
+          // bytes have landed left blank pages - and, if the app was closed in
+          // that window, an imported PDF that never existed at all.
+          await registerPdf(id, bytesToDataUrl(new Uint8Array(buf)));
           insertPdfAt(pdfSrc(id), pages, index);
         };
         reader.readAsArrayBuffer(f);
@@ -1716,6 +1742,11 @@ export default function DocumentCanvas({
           columns: b.columns,
           align: b.align,
           css: b.css,
+          // The column rule travels with the copy too - it was the one pair of
+          // frame fields this list missed, so "Insert Copy" of a ruled page came
+          // back with the default rule instead of the one that was set.
+          rule: b.rule,
+          ruleWidth: b.ruleWidth,
         };
       });
       // Chains whose boxes all sit on this page stay linked among the copies.
@@ -1866,7 +1897,11 @@ export default function DocumentCanvas({
       const doomed = new Set(
         list.filter((b) => b.pageIndex === p).map((b) => b.id),
       );
-      if (!doomed.size) return;
+      // A page can be present without holding any frames - `pageCount` comes
+      // from the highest `pageIndex`, so deleting a page's last frame by hand
+      // leaves a gap the Pages pane still lists. Bailing out here made "Delete
+      // page" silently do nothing on exactly those pages; the shift below closes
+      // the gap whether or not there is anything on the sheet to remove.
       const hasContent = list.some(
         (b) =>
           b.pageIndex === p &&
@@ -1891,6 +1926,18 @@ export default function DocumentCanvas({
       for (const b of next) {
         if (b.nextId && doomed.has(b.nextId)) b.nextId = null;
       }
+      // The marker is furniture for the *last* sheet, so when the page carrying
+      // it is the one being deleted the issue gets a new one rather than
+      // silently losing its sign-off. A document that never had a marker is
+      // left alone.
+      if (
+        list.some((b) => b.kind === 'tombstone') &&
+        !next.some((b) => b.kind === 'tombstone') &&
+        next.length
+      ) {
+        const lastPage = next.reduce((mx, b) => Math.max(mx, b.pageIndex), 0);
+        next.push(tombstoneBox(lastPage, page));
+      }
       applyBoxes(next);
       setOverflowIds((prev) => new Set([...prev].filter((id) => !doomed.has(id))));
       setPourTargets((prev) => new Set([...prev].filter((id) => !doomed.has(id))));
@@ -1906,7 +1953,7 @@ export default function DocumentCanvas({
       snapshot();
       spliceNames(p, 1, []);
     },
-    [applyBoxes, activatePage, reflowAll, snapshot, spliceNames, confirm],
+    [applyBoxes, activatePage, reflowAll, snapshot, spliceNames, confirm, page],
   );
 
   /* Insert > Break > Page break.

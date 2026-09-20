@@ -480,8 +480,6 @@ export function recomposeStory(slices: string[]): string {
 
 export interface FlowSlice {
   html: string;
-  /** True when the story continues past this frame. */
-  hasMore: boolean;
   /** Character offset where this slice begins within the story's text. */
   textStart: number;
 }
@@ -605,7 +603,7 @@ export function flowStory(
       break;
     }
 
-    slices.push({ html: taken.join(''), hasMore: false, textStart: 0 });
+    slices.push({ html: taken.join(''), textStart: 0 });
   }
 
   let acc = 0;
@@ -614,8 +612,10 @@ export function flowStory(
     acc += htmlTextLength(s.html);
   }
 
+  // The only overflow signal a caller needs, and the only one that was ever
+  // read: the frame-by-frame chrome comes from the live DOM (see `reflowAll`),
+  // and a per-slice `hasMore` flag sat here computed but never used.
   const overflow = carry !== null || bi < blocks.length;
-  if (slices.length) slices[slices.length - 1].hasMore = overflow;
 
   // Never destroy text: whatever no frame could take stays appended to the
   // last slice. It renders clipped there (and flags the frame red), so the

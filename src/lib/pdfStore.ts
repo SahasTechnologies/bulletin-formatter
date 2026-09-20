@@ -81,14 +81,18 @@ export function bytesToDataUrl(bytes: Uint8Array): string {
 /**
  * Register a PDF in IndexedDB (the localStorage key is cleaned up here too).
  *
- * Returns nothing on purpose: this used to hand back a fresh object URL, which
- * no caller used and nothing ever revoked, so every import leaked one. The
- * frame resolves its `pdf:` source through the media store anyway, which
- * already caches the single object URL for the blob.
+ * Returns no URL on purpose: this once handed back a fresh object URL that no
+ * caller used and nothing ever revoked, so every import leaked one. The frame
+ * resolves its `pdf:` source through the media store anyway, which already
+ * caches the single object URL for the blob.
+ *
+ * It does return a promise, and callers must await it: the frames that carry the
+ * `pdf:` source are placed by the caller, so inserting them before the bytes
+ * have landed showed blank pages - and if the app was closed inside that window
+ * the imported file was never stored at all.
  */
-export function registerPdf(id: string, dataUrl: string): void {
-  const blob = dataUrlToBlob(dataUrl);
-  void saveMediaBlob(pdfSrc(id), blob);
+export async function registerPdf(id: string, dataUrl: string): Promise<void> {
+  await saveMediaBlob(pdfSrc(id), dataUrlToBlob(dataUrl));
   try {
     localStorage.removeItem(KEY_PREFIX + id);
   } catch {

@@ -57,6 +57,7 @@ import {
   newDocId,
   getVersions,
   recordVersion,
+  MAX_DOCS,
   type StoredDocument,
 } from './lib/storage';
 import { getTemplate, type Template } from './data/templates';
@@ -390,12 +391,7 @@ function templateBoxes(tpl: Template): string | null {
   return JSON.stringify(boxes);
 }
 
-/**
- * True when a stored document still carries the *old* document-level tombstone
- * flag and no marker frame yet. The marker is a frame on the sheet now, so an
- * old piece has one added when it opens; once that is saved the flag is gone
- * and this is never true again.
- */
+/** Read a document's saved page names back, dropping anything malformed. */
 function readPageNames(json: string | undefined): string[] {
   if (!json) return [];
   try {
@@ -408,6 +404,12 @@ function readPageNames(json: string | undefined): string[] {
   }
 }
 
+/**
+ * True when a stored document still carries the *old* document-level tombstone
+ * flag and no marker frame yet. The marker is a frame on the sheet now, so an
+ * old piece has one added when it opens; once that is saved the flag is gone
+ * and this is never true again.
+ */
 function legacyTombstone(doc: { tombstone?: boolean; boxes?: string }): boolean {
   if (doc.tombstone !== true) return false;
   try {
@@ -622,6 +624,89 @@ function AppShell() {
   }, []);
 
   /**
+   * Say so when the document cap pushes the oldest document off the list.
+   *
+   * The cap used to be entirely silent - the document simply vanished from the
+   * home screen, while its version snapshots and its pictures stayed in storage
+   * forever. Anything that costs the user a document now names it. The notice
+   * does not time out, because "a bulletin was just removed" is not something to
+   * read for five seconds and lose.
+   */
+  const reportEviction = useCallback(
+    (evicted: StoredDocument[]) => {
+      const [first] = evicted;
+      if (!first) return;
+      const extra = evicted.length > 1 ? ` and ${evicted.length - 1} more` : '';
+      toast(`“${first.title}” was removed to stay within ${MAX_DOCS} documents${extra}.`, {
+        kind: 'error',
+        detail:
+          'Documents live only in this browser. Save anything you still need as a .bulletin file before continuing.',
+        timeout: 0,
+      });
+    },
+    [toast],
+  );
+
+  /**
+   * The complete saved record for the document that is open right now.
+   *
+   * Everything a document owns lives in a ref rather than in React state, so
+   * persistence can read it without re-rendering on every keystroke - and that
+   * is exactly how a document used to get saved *incomplete*. Opening a
+   * template persisted a record built from a hand-written object literal naming
+   * only id/title/content/page/template, so its master page - the running head
+   * and the folio - was simply absent; the equivalent literal in `importFile`
+   * also dropped `boxes` and `pageNames`. Nothing ever corrected it, because the
+   * only code that wrote `master` at all was the debounced `persistNow`, and a
+   * document that is merely *opened* schedules no save: reload before the first
+   * edit and the furniture was gone for good.
+   *
+   * So the record is assembled here and nowhere else, from the refs, and every
+   * path that creates or swaps in a document saves *this*. There is no longer a
+   * second, shorter shape of record for a call site to get wrong.
+   */
+  const composeActiveDoc = useCallback((): StoredDocument | null => {
+    const base = activeDocRef.current;
+    if (!base) return null;
+    const doc: StoredDocument = {
+      ...base,
+      content: docHtmlRef.current ?? '',
+      updatedAt: Date.now(),
+      // Written unconditionally: these used to be guarded by a truthiness
+      // check, so switching the tombstone OFF - or clearing the running head -
+      // left the old value on disk and it came straight back on reopen.
+      tombstone: tombstoneRef.current,
+      master: serializeMaster(masterRef.current),
+    };
+    if (boxesRef.current) doc.boxes = boxesRef.current;
+    else delete doc.boxes;
+    const names = pageNamesRef.current.filter((n) => n && n.trim());
+    if (names.length) doc.pageNames = JSON.stringify(pageNamesRef.current);
+    else delete doc.pageNames;
+    return doc;
+  }, []);
+
+  /**
+   * Save a document that has just been created or swapped in - *complete*.
+   *
+   * Call it after the refs hold the new document's content, frames, page names
+   * and master; it reads them to build the record. This is what makes opening a
+   * template, importing a `.bulletin`, finishing a merge or appending a sheet
+   * durable in one step instead of waiting on a debounce that only an edit
+   * would ever trigger.
+   */
+  const saveNewDoc = useCallback((): StoredDocument | null => {
+    const doc = composeActiveDoc();
+    if (!doc) return null;
+    activeDocRef.current = doc;
+    setActiveDoc(doc);
+    const { docs, evicted } = saveDoc(doc);
+    setRecentDocs(docs);
+    if (evicted.length) reportEviction(evicted);
+    return doc;
+  }, [composeActiveDoc, reportEviction]);
+
+  /**
    * Read the live editor HTML and write it to saved docs.
    *
    * Asynchronous only because of embedded media: pictures and imported PDF
@@ -632,35 +717,23 @@ function AppShell() {
    */
   const persistNow = useCallback(async () => {
     if (!activeDocRef.current) return;
-    const content = docHtmlRef.current ?? '';
     const offloaded = await offloadMediaForSave(boxesRef.current ?? undefined);
     if (offloaded) boxesRef.current = offloaded;
-    const doc: StoredDocument = {
-      ...activeDocRef.current,
-      content,
-      updatedAt: Date.now(),
-      // Written unconditionally: these used to be guarded by a truthiness
-      // check, so switching the tombstone OFF - or clearing the running head -
-      // left the old value on disk and it came straight back on reopen.
-      tombstone: tombstoneRef.current,
-      master: serializeMaster(masterRef.current),
-    };
-    if (boxesRef.current) doc.boxes = boxesRef.current;
-    const names = pageNamesRef.current.filter((n) => n && n.trim());
-    if (names.length) doc.pageNames = JSON.stringify(pageNamesRef.current);
-    else delete doc.pageNames;
+    const doc = composeActiveDoc();
+    if (!doc) return;
     activeDocRef.current = doc;
-    saveDoc(doc);
+    const { docs, evicted } = saveDoc(doc);
+    if (evicted.length) reportEviction(evicted);
     // Automatic version snapshot (throttled by word-count drift in storage).
-    const text = textOfHtml(content);
+    const text = textOfHtml(doc.content);
     recordVersion(
       doc.id,
       doc.content,
       text.trim() ? text.trim().split(/\s+/).length : 0,
       boxesRef.current ?? undefined,
     );
-    setRecentDocs(loadRecentDocs());
-  }, []);
+    setRecentDocs(docs);
+  }, [composeActiveDoc, reportEviction]);
 
   // Keep the tombstone + master refs in step so persistNow (stable, ref-based)
   // always writes the current values.
@@ -848,9 +921,11 @@ function AppShell() {
     // status bar kept whatever the previous document used.
     setPageName('A4');
     setLandscape(false);
-    setRecentDocs(saveDoc(doc));
+    // Save the complete record, master page and all - not a stub that only
+    // the next edit would fill in.
+    saveNewDoc();
     setScreen('editor');
-  }, []);
+  }, [saveNewDoc]);
 
   /** Reopen a previously-saved document. */
   const openRecent = useCallback((doc: StoredDocument) => {
@@ -879,9 +954,9 @@ function AppShell() {
     masterRef.current = loaded;
     setMaster(loaded);
     setMasterOpen(false);
-    setRecentDocs(saveDoc(refreshed));
+    saveNewDoc();
     setScreen('editor');
-  }, []);
+  }, [saveNewDoc]);
 
   const deleteRecent = useCallback(
     (id: string) => {
@@ -961,8 +1036,14 @@ function AppShell() {
       activeDocRef.current = doc;
       setActiveDoc(doc);
       setCanvasRev((r) => r + 1);
+      // Save straight away. Swapping the content in (appending a template page,
+      // restoring a version) used to rely on the canvas reporting the change
+      // back through its debounced save - but the canvas only *renders* a swap,
+      // and a layout pass that rewrites nothing never calls back, so the swap
+      // could sit in memory until some later edit happened to flush it.
+      void persistNow();
     },
-    [],
+    [persistNow],
   );
 
   /** Save and return to the home screen. */
@@ -1088,11 +1169,11 @@ function AppShell() {
     setMaster(seeded);
     setPageName('A4');
     setLandscape(false);
-    setRecentDocs(saveDoc(doc));
+    saveNewDoc();
     setMergeFiles(null);
     setScreen('editor');
     navigate('/');
-  }, []);
+  }, [saveNewDoc]);
 
   /** Export the document in the proprietary `.bulletin` format. */
   const exportBulletin = useCallback(
@@ -1159,11 +1240,14 @@ function AppShell() {
       masterRef.current = loaded;
       setMaster(loaded);
       setMasterOpen(false);
-      setRecentDocs(saveDoc(doc));
+      // The imported file's frames, page names and master page all have to be
+      // in the saved record - this is the one path where the literal used to
+      // omit `boxes` too, so a reload lost the layout as well as the furniture.
+      saveNewDoc();
       setScreen('editor');
     };
     reader.readAsText(file);
-  }, [toast]);
+  }, [toast, saveNewDoc]);
 
   const pickImage = useCallback((onPick: (f: File) => void) => {
     const input = document.createElement('input');
@@ -2151,7 +2235,9 @@ function VersionPanel({
               const active = i === sel;
               return (
                 <button
-                  key={v.at}
+                  // `at` alone can repeat when two snapshots land in the same
+                  // millisecond; the row index keeps the keys unique.
+                  key={`${v.at}-${i}`}
                   onClick={() => setSel(i)}
                   className={`mb-1 flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left transition-colors ${
                     active
@@ -2580,6 +2666,11 @@ function Dialog({ children, onClose }: { children: React.ReactNode; onClose: () 
       onClick={onClose}
     >
       <div
+        // Marked as a modal both for assistive technology and because the
+        // canvas checks for it: without this, one Escape closed the dialog *and*
+        // cleared the frame selection, and Backspace deleted a frame behind it.
+        role="dialog"
+        aria-modal="true"
         className="w-full max-w-md rounded-lg bg-white p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >

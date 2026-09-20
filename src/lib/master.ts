@@ -144,14 +144,27 @@ export function emptyMasterSet(): MasterSet {
   return { masters: [newMaster('A', 'Master Page A')], assignment: {}, activeId: 'A' };
 }
 
-/** The next free one-character Page ID: A, B, C… then A1, B1… */
-export function nextMasterId(set: MasterSet): string {
+/**
+ * The next free one-character Page ID: A, B, … Z, then the digits.
+ *
+ * The id has to be a *single* character - that is what Publisher's "Page ID (1
+ * character)" field holds, and `sanitizeId` truncates anything longer. The old
+ * fallback returned a two-character id (`M4`), which `addMaster` then sanitized
+ * back down to `M` - an id that was already taken - so the twenty-seventh
+ * master could not be created at all. The digits are the honest place to look
+ * past the alphabet.
+ *
+ * Returns null once all thirty-six are taken, which no real publication reaches.
+ * It cannot fall back to a taken id: a second master sharing one would be
+ * unreachable, since every lookup (`find(m => m.id === id)`) resolves to the
+ * first. Callers refuse the new master and say so instead.
+ */
+export function nextMasterId(set: MasterSet): string | null {
   const used = new Set(set.masters.map((m) => m.id.toUpperCase()));
-  for (let i = 0; i < 26; i++) {
-    const letter = String.fromCharCode(65 + i);
-    if (!used.has(letter)) return letter;
+  for (const ch of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789') {
+    if (!used.has(ch)) return ch;
   }
-  return `M${set.masters.length + 1}`;
+  return null;
 }
 
 /** Publisher's default description for a new master. */

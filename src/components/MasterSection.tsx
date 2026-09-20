@@ -66,6 +66,8 @@ export default function MasterSection({
   }, [applyOpen]);
 
   const active = set.masters.find((m) => m.id === set.activeId) ?? set.masters[0];
+  /** The Page ID a new master would get, or null when all thirty-six are used. */
+  const freeMasterId = nextMasterId(set);
 
   /** Publisher's Two Page Master: warn before the left sheet is dropped. */
   const toggleTwoPage = async () => {
@@ -87,7 +89,13 @@ export default function MasterSection({
 
   const duplicate = () => {
     if (!active) return;
-    const id = nextMasterId(set);
+    if (!freeMasterId) {
+      toast('Every Page ID (A-Z, 0-9) is already in use - delete a master page first.', {
+        kind: 'error',
+      });
+      return;
+    }
+    const id = freeMasterId;
     onChange((s) => {
       const src = s.masters.find((m) => m.id === active.id);
       if (!src) return s;
@@ -266,8 +274,8 @@ export default function MasterSection({
           title="New master page"
           subtitle="Publisher gives every master a one-character Page ID."
           submitLabel="Create"
-          initialId={nextMasterId(set)}
-          initialDescription={defaultDescription(nextMasterId(set))}
+          initialId={freeMasterId ?? ''}
+          initialDescription={freeMasterId ? defaultDescription(freeMasterId) : ''}
           twoPageChoice
           onCancel={() => setAddOpen(false)}
           /* Publisher refuses a Page ID that is already taken - the dialog says
@@ -426,6 +434,11 @@ function PageRangeDialog({
       onClick={onCancel}
     >
       <div
+        // Marked as a modal so the canvas leaves the keyboard alone while it is
+        // up: without this, Escape reached the page as well as the dialog, and
+        // Backspace could delete a selected frame behind it.
+        role="dialog"
+        aria-modal="true"
         className="w-full max-w-sm rounded-lg bg-white p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
@@ -524,6 +537,11 @@ function MasterDialog({
       onClick={onCancel}
     >
       <div
+        // Marked as a modal so the canvas leaves the keyboard alone while it is
+        // up: without this, Escape reached the page as well as the dialog, and
+        // Backspace could delete a selected frame behind it.
+        role="dialog"
+        aria-modal="true"
         className="w-full max-w-sm rounded-lg bg-white p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {

@@ -196,6 +196,10 @@ export function getCurrentBlock(): HTMLElement | null {
   if (!editorEl || !savedRange) return null;
   let node: Node | null = savedRange.startContainer;
   if (node.nodeType === Node.TEXT_NODE) node = node.parentNode;
+  // A frame whose text sits directly in its root, with no block wrapper, is its
+  // own block. Climbing past it returned null, so every caller fell through to
+  // its "nothing to style" branch and the command was silently dropped.
+  if (node === editorEl) return editorEl;
   while (node && node.parentNode !== editorEl) node = node.parentNode;
   return node && node !== editorEl ? (node as HTMLElement) : null;
 }
@@ -704,13 +708,10 @@ export function currentStyle(prop: string): string {
 }
 
 /**
- * Find `query` in the editor text and select the next match after the caret.
- * Returns the 1-based match index, or 0 when there is no match.
- */
-/**
  * Replace every occurrence of `query` with `replacement` (case-insensitive).
- * Works across separate text nodes by doing one big innerHTML surgery pass:
- * cheap, and fine for bulletin-sized documents. Returns the match count.
+ * Walks the text nodes and rewrites each one in place, so a match that spans
+ * two runs is still found and no markup is ever re-parsed. Returns the match
+ * count.
  */
 export function replaceAll(query: string, replacement: string): number {
   if (!editorEl || !query) return 0;
@@ -730,9 +731,12 @@ export function replaceAll(query: string, replacement: string): number {
     const hits = node.data.match(re);
     if (!hits) continue;
     count += hits.length;
-    // Assigning to `data` is a literal replacement - no `$&` expansion to
-    // escape, and no markup can be produced by the replacement text.
-    node.data = node.data.replace(re, replacement);
+    // The *function* form of the replacement is the literal one. With a string,
+    // `String.replace` still expands `$&`, `` $` ``, `$'` and `$$` - so
+    // replacing "cat" with "$&s" produced "cats" rather than the text the user
+    // typed. Building it in a callback inserts the replacement verbatim, and no
+    // markup can be produced by it either.
+    node.data = node.data.replace(re, () => replacement);
   }
 
   if (count > 0) {
@@ -793,6 +797,10 @@ export function transformSelectionCase(mode: 'lower' | 'upper' | 'title'): void 
   exec('insertText', t);
 }
 
+/**
+ * Find `query` in the editor text and select the next match after the caret.
+ * Returns the 1-based match index, or 0 when there is no match.
+ */
 export function findAndSelect(query: string): number {
   if (!editorEl || !query) return 0;
 

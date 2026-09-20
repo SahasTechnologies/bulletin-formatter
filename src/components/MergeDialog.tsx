@@ -62,7 +62,12 @@ export default function MergeDialog({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
-      <div className="flex max-h-[85vh] w-full max-w-[620px] flex-col overflow-hidden rounded-lg bg-white shadow-xl">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Merge bulletins"
+        className="flex max-h-[85vh] w-full max-w-[620px] flex-col overflow-hidden rounded-lg bg-white shadow-xl"
+      >
         <header className="flex flex-none items-center gap-2 border-b border-gdoc-border px-4 py-3">
           <FileStack size={18} className="text-bb-600" />
           <h2 className="flex-1 text-[15px] font-medium text-[#3c4043]">Merge bulletins</h2>
