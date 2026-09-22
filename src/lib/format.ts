@@ -12,6 +12,8 @@ export interface BulletinDoc {
   title: string;
   content: string;
   page: PageSize;
+  /** Orientation of the sheet (`true` = landscape); absent = portrait. */
+  landscape?: boolean;
   createdAt: number;
   updatedAt: number;
   template?: string;
@@ -50,6 +52,7 @@ export function parseBulletin(raw: string): BulletinDoc | null {
       title: data.title,
       content: data.content,
       page: data.page === 'Letter' ? 'Letter' : 'A4',
+      landscape: data.landscape === true,
       createdAt: typeof data.createdAt === 'number' ? data.createdAt : Date.now(),
       updatedAt: typeof data.updatedAt === 'number' ? data.updatedAt : Date.now(),
       template: typeof data.template === 'string' ? data.template : undefined,

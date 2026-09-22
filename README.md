@@ -44,13 +44,14 @@ npm run dev        # http://localhost:5173
 | ------ | ------------ |
 | `npm run dev` | Vite dev server with hot module replacement |
 | `npm run build` | `tsc -b` (type-check the whole project) **then** `vite build` → `dist/` |
+| `npm test` | The round-trip tests for a frame (see [Tests](#tests)) |
 | `npm run preview` | Serve the built bundle from `dist/` |
 
-There is **no test suite** in this repository. `npm run build` is the gate: it
-type-checks every file first, so a red build means a type error somewhere. After
-a change, the honest check is the build plus a pass through the running app -
-the flows that matter (opening a template, typing in a frame, threading an
-overflow, saving and reloading) are all interactive.
+`npm run build` type-checks every file before it bundles, so a red build means a
+type error somewhere. Beyond that, the honest check after a change is `npm test`
+plus a pass through the running app - most flows (opening a template, typing in a
+frame, threading an overflow, dragging a rule) are interactive and have no
+automated cover.
 
 **Stack**: Vite 5 · React 18 · TypeScript 5.6 · Tailwind CSS 3 · lucide-react
 (icons, no Material) · pdfjs-dist (PDF import).
@@ -600,6 +601,7 @@ src/
   lib/
     textbox.ts             Frame model + story-flow engine (recompose/flow/caret)
     frames.ts              Document → frames (saved boxes, or split legacy HTML)
+    boxState.ts            How a frame is written down and read back (undo + save)
     master.ts              Master pages: masters, assignment, bands, Tab stops, fields
     format.ts              The .bulletin file format (serialize / parse / download)
     storage.ts             localStorage: recent docs, versions, purge, media offload
@@ -635,6 +637,7 @@ src/
     localFonts.ts          The four house typefaces
     googleFonts.ts         Generated full Google Fonts catalogue (1,900+ families)
 scripts/build-fonts.mjs    Regenerates src/data/googleFonts.ts
+tests/                     Round-trip tests for a frame (`npm test`)
 public/fonts/              Biome, Franklin Gothic, Aparajita, Dreaming Outloud Script
 public/logo.webp           The masthead mark
 ```
@@ -662,6 +665,36 @@ logic.
 - **No native dialogs.** `useFeedback()` for anything the user must know or
   confirm.
 - **`npm run build` before you call it done.** It type-checks the whole project.
+
+### Tests
+
+```bash
+npm test
+```
+
+One suite, `tests/boxState.test.mjs`, guarding one thing: **a frame field cannot
+be written by one serializer and dropped by another.** A frame leaves the canvas
+through two doors - the undo stack and the saved document - and returns through
+two more (`boxFromHistory` and `buildModel`). Each of those four places used to
+spell out its own field list, and the lists drifted in silence: the undo stack
+recorded a frame's column rule before its rebuild could read it, and the rebuild
+learned to read the frame's alignment before the stack had ever recorded it.
+Neither half looked wrong on its own; a real frame lost its rule on the next
+Ctrl+Z.
+
+So the shape lives in `src/lib/boxState.ts`, once, and the suite pushes a frame
+carrying *every* field through both round trips:
+
+1. `FRAME_FIELDS` in `src/lib/boxState.ts` is checked against `TextBox` **by the
+   TypeScript build** - add a field to a frame and `npm run build` fails until it
+   is listed (or exempted as deliberately unsaved).
+2. The tests fail until that field actually survives a save/reload *and* an
+   undo, and until nothing invents a value for a field that was never set.
+
+The suite runs on Node's own test runner through Vite's module loader, so there
+is no test framework to install: Vite is already here, and it is what makes the
+bundler-style imports and TypeScript readable outside the browser. The only DOM
+call the code under test makes is stubbed at the top of the file.
 
 ### Adding a template page
 

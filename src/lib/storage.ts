@@ -16,6 +16,8 @@ export interface StoredDocument {
   template?: string;
   createdAt?: number;
   page?: 'A4' | 'Letter';
+  /** Orientation of the sheet (`true` = landscape). Absent = portrait. */
+  landscape?: boolean;
   /**
    * Text boxes (frames) on the page, serialized as JSON. Absent for legacy
    * documents whose whole page is one flat HTML blob (migrated on open).

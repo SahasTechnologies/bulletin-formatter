@@ -47,6 +47,12 @@ import {
   MIN_W,
   SPLIT_GAP,
 } from '../lib/frames';
+import {
+  boxFromHistory,
+  historyStateOf,
+  storedBoxOf,
+  type BoxSnapshot,
+} from '../lib/boxState';
 import { useGoogleFont } from './GoogleFontProvider';
 import { GOOGLE_FONT_FAMILIES } from '../data/googleFonts';
 import {
@@ -326,31 +332,6 @@ function mirrorBoxFont(el: HTMLElement, box?: { css?: string; align?: string }):
   mirrorFrameStyle(el, box?.css, box?.align);
 }
 
-/** Serialized form of one box for snapshots/storage. */
-interface BoxEntry {
-  id: string;
-  pageIndex: number;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  html: string;
-  nextId: string | null;
-  kind?: 'image' | 'sheet' | 'shape' | 'line' | 'pdf' | 'tombstone';
-  src?: string;
-  pdfPage?: number;
-  radius?: number;
-  fade?: number;
-  fit?: 'cover' | 'contain';
-  fill?: string;
-  stroke?: string;
-  thickness?: number;
-  ph?: string;
-  columns?: number;
-  /** Column rule: its colour (`'none'` switches it off) and its weight, px. */
-  rule?: string;
-  ruleWidth?: number;
-}
 export default function DocumentCanvas({
   zoom,
   spellCheck,
@@ -477,37 +458,7 @@ export default function DocumentCanvas({
 
   /** Serialize the document exactly as it stands on screen right now. */
   const captureState = useCallback((): string => {
-    return JSON.stringify(
-      boxesRef.current.map((b) => ({
-        id: b.id,
-        pageIndex: b.pageIndex,
-        x: Math.round(b.x),
-        y: Math.round(b.y),
-        w: Math.round(b.w),
-        h: Math.round(b.h),
-        html: b.kind ? '' : boxEls.current.get(b.id)?.innerHTML ?? b.html,
-        columns: b.columns,
-        // The column rule belongs to this list too. `restoreState` rebuilds a
-        // frame from what it finds here, so a field the history never wrote down
-        // could not be brought back no matter what the rebuild knew about it -
-        // undo dropped a frame's rule even after the rebuild learned to read it.
-        rule: b.rule,
-        ruleWidth: typeof b.ruleWidth === 'number' ? Math.round(b.ruleWidth) : undefined,
-        nextId: b.nextId,
-        align: b.align,
-        css: b.css,
-        kind: b.kind,
-        src: b.src,
-        pdfPage: b.pdfPage,
-        radius: b.radius,
-        fade: b.fade,
-        fit: b.fit,
-        fill: b.fill,
-        stroke: b.stroke,
-        thickness: b.thickness,
-        ph: b.ph,
-      })),
-    );
+    return historyStateOf(boxesRef.current, (id) => boxEls.current.get(id)?.innerHTML);
   }, []);
 
   /** Push the current state, dropping any redo trail ahead of it. */
@@ -549,54 +500,11 @@ export default function DocumentCanvas({
       const el = boxEls.current.get(b.id);
       liveHtml.current.set(b.id, el ? el.innerHTML : b.html);
     }
-    const entries: BoxEntry[] = boxesRef.current.map((b) => {
-      const el = boxEls.current.get(b.id);
-      if (b.kind) {
-        // Image, shape, line and empty-page markers have no live text.
-        return {
-          id: b.id,
-          pageIndex: b.pageIndex,
-          x: Math.round(b.x),
-          y: Math.round(b.y),
-          w: Math.round(b.w),
-          h: Math.round(b.h),
-          html: '',
-          nextId: b.nextId,
-          kind: b.kind,
-          src: b.src,
-          pdfPage: b.pdfPage,
-          radius: typeof b.radius === 'number' ? Math.round(b.radius) : undefined,
-          fade: typeof b.fade === 'number' ? Math.round(b.fade) : undefined,
-          fit: b.fit,
-          fill: b.fill,
-          stroke: b.stroke,
-          thickness: typeof b.thickness === 'number' ? Math.round(b.thickness) : undefined,
-          ph: b.ph,
-        };
-      }
-      return {
-        id: b.id,
-        pageIndex: b.pageIndex,
-        x: Math.round(b.x),
-        y: Math.round(b.y),
-        w: Math.round(b.w),
-        h: Math.round(b.h),
-        html: el ? el.innerHTML : b.html,
-        // Keep an explicit 1 so a deliberate single-column frame survives a
-        // reload as one frame instead of being re-split per element.
-        columns: b.columns ? Math.max(1, b.columns) : undefined,
-        // The column rule is part of the frame, so it has to be written down:
-        // without these two the choice lived only in React state and was
-        // silently gone on the next reload.
-        rule: b.rule,
-        ruleWidth: typeof b.ruleWidth === 'number' ? Math.round(b.ruleWidth) : undefined,
-        nextId: b.nextId,
-        // The frame's standard outlives the session: a retype after a reload
-        // must still adopt it rather than the first block's borrowed type.
-        align: b.align,
-        css: b.css,
-      };
-    });
+    // The saved shape is described in `lib/boxState.ts` and shared with the undo
+    // stack, so neither can drift from the other or from what a reload reads.
+    const entries: BoxSnapshot[] = boxesRef.current.map((b) =>
+      storedBoxOf(b, boxEls.current.get(b.id)?.innerHTML),
+    );
     setThumbRev((r) => r + 1);
     onDocChange(
       entries.map((e) => e.html).join(''),
@@ -710,17 +618,22 @@ export default function DocumentCanvas({
     if (reworded) snapshotRef.current(false);
 
     // Standalone boxes: red chrome when their own content clips. Compare
-    // against the box's *state* height with a safety tolerance so normal typing
-    // and subpixel font metrics don't falsely turn the chrome red.
+    // against the box's *state* with a safety tolerance so normal typing and
+    // subpixel font metrics don't falsely turn the chrome red.
+    //
+    // Every frame carries an inline `column-count`, single-column frames
+    // included, so every frame is a multicol box - and a multicol box lays out
+    // the text it cannot fit as *extra column boxes to the right*: scrollWidth
+    // grows while scrollHeight stays exactly at the frame's height. Testing
+    // only scrollHeight for single-column frames therefore tested a number that
+    // can never move, so the common frame never turned red and never offered
+    // its pour handle, however much text overflowed it. Test both axes.
     for (const b of list) {
       if (b.nextId || incoming.has(b.id) || b.kind) continue;
       const el = boxEls.current.get(b.id);
       if (!el) continue;
-      const cols = Math.max(1, Math.min(3, Math.round(b.columns ?? 1)));
-      if (cols > 1) {
-        if (el.scrollWidth > el.clientWidth + 4) overflow.add(b.id);
-      } else {
-        if (el.scrollHeight > b.h + 6) overflow.add(b.id);
+      if (el.scrollWidth > el.clientWidth + 4 || el.scrollHeight > b.h + 6) {
+        overflow.add(b.id);
       }
     }
 
@@ -742,60 +655,37 @@ export default function DocumentCanvas({
    */
   const restoreState = useCallback(
     (state: string) => {
-      let entries: Array<Record<string, unknown>>;
+      let entries: BoxSnapshot[];
       try {
         const parsed = JSON.parse(state);
         if (!Array.isArray(parsed)) return;
-        entries = parsed as Array<Record<string, unknown>>;
+        entries = parsed as BoxSnapshot[];
       } catch {
         return;
       }
       historySuspended.current = true;
-      const next: TextBox[] = entries.map((e) => {
+      // Seed the live DOM first: a frame that is still on the sheet keeps its
+      // contentEditable contents, and React must not be allowed to re-seed it.
+      // Every *text* entry is copied, the empty ones included: an element is
+      // seeded once (see `registerBoxEl`), so skipping a frame whose restored
+      // copy is blank left the words the user was undoing standing in the DOM -
+      // the next snapshot read them straight back and the undo changed
+      // nothing. Objects (pictures, sheets, shapes) carry no live text: their
+      // entry's `html` is always '' and they register no editable element.
+      for (const e of entries) {
+        if (e.kind) continue;
         const html = typeof e.html === 'string' ? e.html : '';
         const id = String(e.id);
-        if (html) {
-          liveHtml.current.set(id, html);
-          const el = boxEls.current.get(id);
-          if (el && e.kind !== 'image' && e.kind !== 'sheet') {
-            el.innerHTML = html;
-            el.dataset.seeded = '1';
-          }
+        liveHtml.current.set(id, html);
+        const el = boxEls.current.get(id);
+        if (el) {
+          el.innerHTML = html;
+          el.dataset.seeded = '1';
         }
-        return {
-          id,
-          pageIndex: Number(e.pageIndex ?? 0),
-          x: Number(e.x ?? 0),
-          y: Number(e.y ?? 0),
-          w: Number(e.w ?? MIN_W),
-          h: Number(e.h ?? MIN_H),
-          html,
-          nextId: (e.nextId as string | null) ?? null,
-          kind: e.kind as TextBox['kind'],
-          src: typeof e.src === 'string' ? e.src : undefined,
-          pdfPage: typeof e.pdfPage === 'number' ? e.pdfPage : undefined,
-          radius: typeof e.radius === 'number' ? e.radius : undefined,
-          fade: typeof e.fade === 'number' ? e.fade : undefined,
-          fit: e.fit === 'contain' ? 'contain' : e.fit === 'cover' ? 'cover' : undefined,
-          fill: typeof e.fill === 'string' ? e.fill : undefined,
-          stroke: typeof e.stroke === 'string' ? e.stroke : undefined,
-          thickness: typeof e.thickness === 'number' ? e.thickness : undefined,
-          ph: typeof e.ph === 'string' ? e.ph : undefined,
-          columns: typeof e.columns === 'number' ? e.columns : undefined,
-          // The rule, the alignment and the frame's text standard are part of
-          // the frame, not decoration laid over it. `snapshot` records all four
-          // - so leaving them out of the rebuild here meant an undo silently
-          // stripped a frame's column rule, its alignment and its `data-text`,
-          // even though the state being restored still held them.
-          rule: typeof e.rule === 'string' ? e.rule : undefined,
-          ruleWidth: typeof e.ruleWidth === 'number' ? e.ruleWidth : undefined,
-          align:
-            e.align === 'center' || e.align === 'right' || e.align === 'justify' || e.align === 'left'
-              ? e.align
-              : undefined,
-          css: typeof e.css === 'string' ? e.css : undefined,
-        };
-      });
+      }
+      // ...then rebuild the model through the one reader that reads every field
+      // back (see `lib/boxState.ts`).
+      const next: TextBox[] = entries.map(boxFromHistory);
       setSelId(null);
       setEditId(null);
       editIdRef.current = null;

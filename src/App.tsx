@@ -530,6 +530,13 @@ function AppShell() {
   const [showToolbar, setShowToolbar] = useState(true);
   const [pageName, setPageName] = useState<PageSizeName>('A4');
   const [landscape, setLandscape] = useState(false);
+  // The sheet lives in a ref as well as in state: `composeActiveDoc` runs
+  // outside React, often in the same tick as a document swap (a state update
+  // had not been applied yet by the time the record was assembled). Every
+  // choice of paper or orientation goes through these two setters so the ref
+  // and the chip on screen can never disagree.
+  const pageNameRef = useRef<PageSizeName>('A4');
+  const landscapeRef = useRef(false);
   const [viewMode, setViewMode] = useState<'editing' | 'viewing'>('editing');
   const [docLang, setDocLang] = useState(ed.getDocLang());
 
@@ -672,6 +679,12 @@ function AppShell() {
       ...base,
       content: docHtmlRef.current ?? '',
       updatedAt: Date.now(),
+      // The sheet as it is *now*, not the one the document was created with:
+      // these were only ever written by the paths that build a record from
+      // scratch, so File > Page setup and > Orientation never reached storage
+      // and a reload brought the old size and the portrait sheet straight back.
+      page: pageNameRef.current,
+      landscape: landscapeRef.current,
       // Written unconditionally: these used to be guarded by a truthiness
       // check, so switching the tombstone OFF - or clearing the running head -
       // left the old value on disk and it came straight back on reopen.
@@ -717,11 +730,26 @@ function AppShell() {
    */
   const persistNow = useCallback(async () => {
     if (!activeDocRef.current) return;
-    const offloaded = await offloadMediaForSave(boxesRef.current ?? undefined);
-    if (offloaded) boxesRef.current = offloaded;
+    // Compose the record *before* the first await. The media offload below
+    // waits on IndexedDB, and the open document can be swapped while it does
+    // (File > Open, a template, a finished merge): reading the refs afterwards
+    // assembled one document's title around another document's frames, and the
+    // old frames rewritten by the offload were assigned straight back onto
+    // `boxesRef` - i.e. saved into the document that had just replaced them.
+    // Composing here pins every field to the document that was open when this
+    // save was asked for.
     const doc = composeActiveDoc();
     if (!doc) return;
-    activeDocRef.current = doc;
+    const boxesJson = doc.boxes;
+    const offloaded = await offloadMediaForSave(boxesJson);
+    if (offloaded && offloaded !== boxesJson) {
+      doc.boxes = offloaded;
+      // Adopt the rewritten frames only if they are still the live ones.
+      if (boxesRef.current === boxesJson) boxesRef.current = offloaded;
+    }
+    // Refresh the open record's timestamp - but never write the old document
+    // back over the one that replaced it.
+    if (activeDocRef.current?.id === doc.id) activeDocRef.current = doc;
     const { docs, evicted } = saveDoc(doc);
     if (evicted.length) reportEviction(evicted);
     // Automatic version snapshot (throttled by word-count drift in storage).
@@ -730,10 +758,58 @@ function AppShell() {
       doc.id,
       doc.content,
       text.trim() ? text.trim().split(/\s+/).length : 0,
-      boxesRef.current ?? undefined,
+      doc.boxes,
     );
     setRecentDocs(docs);
   }, [composeActiveDoc, reportEviction]);
+
+  /**
+   * Write a pending debounced save out *now*, before the open document is
+   * swapped.
+   *
+   * Opening a template, a recent document, a file or a finished merge replaces
+   * the refs the pending timer reads when it finally fires - so it saved the
+   * *new* document and silently dropped whatever the previous one held in its
+   * last debounce window.
+   */
+  const flushPendingSave = useCallback(() => {
+    if (!persistTimer.current) return;
+    clearTimeout(persistTimer.current);
+    persistTimer.current = null;
+    void persistNow();
+  }, [persistNow]);
+
+  /** Ask for a save on a short debounce. For changes that touch the record but
+      not the canvas - the sheet, the title - because nothing else will ever
+      schedule one, and a change with no save behind it is a change that only
+      exists until the tab closes. */
+  const scheduleSave = useCallback(() => {
+    if (!activeDocRef.current) return;
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = setTimeout(persistNow, 400);
+  }, [persistNow]);
+
+  /** Pick the paper size: state for the chip, ref for the saved record. */
+  const choosePaper = useCallback(
+    (name: PageSizeName) => {
+      const changed = pageNameRef.current !== name;
+      pageNameRef.current = name;
+      setPageName(name);
+      if (changed) scheduleSave();
+    },
+    [scheduleSave],
+  );
+
+  /** Pick the orientation - see `choosePaper`. */
+  const chooseOrientation = useCallback(
+    (land: boolean) => {
+      const changed = landscapeRef.current !== land;
+      landscapeRef.current = land;
+      setLandscape(land);
+      if (changed) scheduleSave();
+    },
+    [scheduleSave],
+  );
 
   // Keep the tombstone + master refs in step so persistNow (stable, ref-based)
   // always writes the current values.
@@ -870,13 +946,22 @@ function AppShell() {
     [recalc, persistNow],
   );
 
-  const handleTitleChange = useCallback((t: string) => {
-    setTitle(t);
-    if (activeDocRef.current) activeDocRef.current = { ...activeDocRef.current, title: t };
-  }, []);
+  const handleTitleChange = useCallback(
+    (t: string) => {
+      setTitle(t);
+      if (activeDocRef.current) activeDocRef.current = { ...activeDocRef.current, title: t };
+      // A rename is an edit like any other. It scheduled no save of its own, so
+      // it only reached storage if something else happened to touch the
+      // document - and the pagehide flush returns early when no timer is
+      // pending, which made renaming and closing the tab lose the new name.
+      scheduleSave();
+    },
+    [scheduleSave],
+  );
 
   /** Open a template as a brand-new document. */
   const openTemplate = useCallback((tpl: Template) => {
+    flushPendingSave();
     const now = Date.now();
     // Templates that ask for a text frame open as full-page frames carrying
     // the real column count, so the Columns toolbar and the gray column rule
@@ -919,16 +1004,17 @@ function AppShell() {
     setMasterOpen(false);
     // Templates are A4 portrait - without this the page-size chip in the
     // status bar kept whatever the previous document used.
-    setPageName('A4');
-    setLandscape(false);
+    choosePaper('A4');
+    chooseOrientation(false);
     // Save the complete record, master page and all - not a stub that only
     // the next edit would fill in.
     saveNewDoc();
     setScreen('editor');
-  }, [saveNewDoc]);
+  }, [flushPendingSave, choosePaper, chooseOrientation, saveNewDoc]);
 
   /** Reopen a previously-saved document. */
   const openRecent = useCallback((doc: StoredDocument) => {
+    flushPendingSave();
     const refreshed: StoredDocument = {
       ...doc,
       updatedAt: Date.now(),
@@ -938,7 +1024,8 @@ function AppShell() {
     activeDocRef.current = refreshed;
     setActiveDoc(refreshed);
     setTitle(doc.title);
-    setPageName(doc.page === 'Letter' ? 'Letter' : 'A4');
+    choosePaper(doc.page === 'Letter' ? 'Letter' : 'A4');
+    chooseOrientation(doc.landscape === true);
     docHtmlRef.current = doc.content ?? '';
     boxesRef.current = doc.boxes ?? null;
     const names = readPageNames(doc.pageNames);
@@ -956,7 +1043,7 @@ function AppShell() {
     setMasterOpen(false);
     saveNewDoc();
     setScreen('editor');
-  }, [saveNewDoc]);
+  }, [flushPendingSave, choosePaper, chooseOrientation, saveNewDoc]);
 
   const deleteRecent = useCallback(
     (id: string) => {
@@ -1142,6 +1229,7 @@ function AppShell() {
 
   /** Open the merged issue as a new document. */
   const handleMergeDone = useCallback((result: MergeResult) => {
+    flushPendingSave();
     const now = Date.now();
     const doc: StoredDocument = {
       id: newDocId(),
@@ -1167,13 +1255,13 @@ function AppShell() {
     });
     masterRef.current = seeded;
     setMaster(seeded);
-    setPageName('A4');
-    setLandscape(false);
+    choosePaper('A4');
+    chooseOrientation(false);
     saveNewDoc();
     setMergeFiles(null);
     setScreen('editor');
     navigate('/');
-  }, [saveNewDoc]);
+  }, [flushPendingSave, choosePaper, chooseOrientation, saveNewDoc, navigate]);
 
   /** Export the document in the proprietary `.bulletin` format. */
   const exportBulletin = useCallback(
@@ -1185,6 +1273,7 @@ function AppShell() {
         title: name,
         content: docHtmlRef.current || '',
         page: pageName,
+        landscape: landscapeRef.current || undefined,
         createdAt: activeDocRef.current?.createdAt ?? Date.now(),
         updatedAt: Date.now(),
         template: activeDocRef.current?.template,
@@ -1202,6 +1291,7 @@ function AppShell() {
 
   /** Import a `.bulletin` file and open it in the editor. */
   const importFile = useCallback((file: File) => {
+    flushPendingSave();
     const reader = new FileReader();
     reader.onload = () => {
       const parsed = parseBulletin(String(reader.result));
@@ -1224,7 +1314,8 @@ function AppShell() {
       activeDocRef.current = doc;
       setActiveDoc(doc);
       setTitle(doc.title);
-      setPageName(doc.page === 'Letter' ? 'Letter' : 'A4');
+      choosePaper(doc.page === 'Letter' ? 'Letter' : 'A4');
+      chooseOrientation(parsed.landscape === true);
       docHtmlRef.current = parsed.content ?? '';
       boxesRef.current = parsed.boxes ?? null;
       const names = readPageNames(parsed.pageNames);
@@ -1247,7 +1338,7 @@ function AppShell() {
       setScreen('editor');
     };
     reader.readAsText(file);
-  }, [toast, saveNewDoc]);
+  }, [flushPendingSave, choosePaper, chooseOrientation, toast, saveNewDoc]);
 
   const pickImage = useCallback((onPick: (f: File) => void) => {
     const input = document.createElement('input');
@@ -1318,35 +1409,19 @@ function AppShell() {
           goHome();
           break;
         case 'file.open': {
+          // The same route as Home > Import: the chosen file opens as its own
+          // document. This case used to parse the file by hand and push its
+          // content into the record that was already open - which saved it
+          // under the *old* document's title, page size, page names and
+          // tombstone (none of which the case updated on the record), and
+          // overwrote the bulletin the user was working in, because
+          // `replaceDocContent` writes through to storage under the open id.
           const input = document.createElement('input');
           input.type = 'file';
           input.accept = '.bulletin,.json,application/json';
           input.onchange = () => {
             const f = input.files?.[0];
-            if (!f) return;
-            const reader = new FileReader();
-            reader.onload = () => {
-              const parsed = parseBulletin(String(reader.result));
-              if (!parsed) {
-                toast("That doesn't look like a Bulletin file.", {
-                  kind: 'error',
-                  detail: 'Open a .bulletin or .json file saved from this app.',
-                });
-                return;
-              }
-              setTitle(parsed.title);
-              setPageName(parsed.page === 'Letter' ? 'Letter' : 'A4');
-              replaceDocContent(parsed.content, parsed.boxes);
-              const imported = loadMaster(parsed.master, {
-                masterHeader: parsed.masterHeader,
-                masterFooter: parsed.masterFooter,
-              });
-              masterRef.current = imported;
-              setMaster(imported);
-              recalc();
-              persistNow();
-            };
-            reader.readAsText(f);
+            if (f) importFile(f);
           };
           input.click();
           break;
@@ -1409,16 +1484,16 @@ function AppShell() {
           break;
 
         case 'file.page.A4':
-          setPageName('A4');
+          choosePaper('A4');
           break;
         case 'file.page.Letter':
-          setPageName('Letter');
+          choosePaper('Letter');
           break;
         case 'file.orientation.portrait':
-          setLandscape(false);
+          chooseOrientation(false);
           break;
         case 'file.orientation.landscape':
-          setLandscape(true);
+          chooseOrientation(true);
           break;
         case 'file.print':
           window.print();
@@ -1619,7 +1694,7 @@ function AppShell() {
         }
       }
     },
-    [exportBulletin, insertImageBox, pickImage, recalc, persistNow, replaceDocContent, title, goHome, openFind, size, toggleTombstone, navigate],
+    [exportBulletin, choosePaper, chooseOrientation, importFile, insertImageBox, pickImage, persistNow, title, goHome, openFind, size, toggleTombstone, navigate],
   );
 
   /* ---------------- keyboard shortcuts ---------------- */

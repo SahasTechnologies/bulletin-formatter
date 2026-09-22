@@ -16,6 +16,7 @@
 import { sanitizeFrameText } from './frameStyle';
 import { tombstoneCorner, tombstoneOffCorner } from './marker';
 import { COLUMN_RULE_MAX_WIDTH } from './textbox';
+import type { BoxSnapshot } from './boxState';
 import type { TextBox } from './textbox';
 
 /**
@@ -360,7 +361,9 @@ function buildBoxes(
 ): TextBox[] {
   if (boxesJson) {
     try {
-      const parsed = JSON.parse(boxesJson) as Array<Partial<TextBox>>;
+      // Typed as the stored shape rather than a loose `Partial<TextBox>`, so a
+      // field renamed on one side of the save/reload pair is a compile error.
+      const parsed = JSON.parse(boxesJson) as Array<Partial<BoxSnapshot>>;
       if (Array.isArray(parsed)) {
         const raw = parsed.filter(
           (b) => b && typeof b.x === 'number' && typeof b.y === 'number',
